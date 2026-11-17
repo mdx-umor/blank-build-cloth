@@ -230,12 +230,13 @@ export class PatternEditor {
           c.strokeStyle = col('--faint'); c.lineWidth = 1 / v.s; c.stroke();
         }
       }
-      // label
-      const fs = clamp(11 / v.s, 0.6, 3.2);
-      c.font = `600 ${fs}px Inter, system-ui, sans-serif`; c.textAlign = 'center'; c.fillStyle = col('--piece-ink');
-      c.globalAlpha = 0.75; c.fillText(p.label, p.w / 2, -fs * 0.6);
-      c.font = `400 ${fs * 0.9}px Inter, system-ui, sans-serif`; c.globalAlpha = 0.55;
-      c.fillText(`${this.app.fmtLen(p.w)} × ${this.app.fmtLen(p.h)} ${this.app.unit()}`, p.w / 2, p.h + fs * 1.3);
+      // name + size under the piece, like a printed cutting sheet
+      const fs = clamp(12 / v.s, 0.7, 3.4);
+      c.textAlign = 'center'; c.fillStyle = col('--piece-ink');
+      c.font = `500 ${fs}px Inter, system-ui, sans-serif`; c.globalAlpha = 0.9;
+      c.fillText(p.label, p.w / 2, p.h + fs * 1.45);
+      c.font = `400 ${fs * 0.85}px Inter, system-ui, sans-serif`; c.globalAlpha = 0.55;
+      c.fillText(`${this.app.fmtLen(p.w)} × ${this.app.fmtLen(p.h)} ${this.app.unit()} · cut 1`, p.w / 2, p.h + fs * 2.7);
       c.globalAlpha = 1;
       c.restore();
     }

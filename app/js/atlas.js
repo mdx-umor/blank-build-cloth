@@ -205,6 +205,7 @@ export function piecePath(c, piece) {
   c.beginPath();
   piece.poly.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y));
   c.closePath();
+  for (const h of piece.holes || []) { h.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath(); } // wound the other way
 }
 // garment space → sheet cm for one panel face
 export const faceMatrix = (pn, piece) => [pn.toLocal[0], pn.toLocal[1], pn.toLocal[2], pn.toLocal[3], pn.toLocal[4] + piece.sx, pn.toLocal[5] + piece.sy];
@@ -216,38 +217,62 @@ export const faceMatrix = (pn, piece) => [pn.toLocal[0], pn.toLocal[1], pn.toLoc
 export function drawFabric(c, garment, fabric, overlays, { fillSheet = false } = {}) {
   const base = fabric.color || '#ffffff';
   if (fillSheet) { c.fillStyle = base; c.fillRect(-2, -2, garment.sheet.w + 4, garment.sheet.h + 4); }
-  const b = garment.bounds;
-  for (const pn of garment.panels) {
-    const piece = garment.pieces.find(p => p.id === pn.piece);
-    const m = faceMatrix(pn, piece);
-    c.save();
-    c.transform(...m);
-    c.beginPath(); pn.outline.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath();
-    c.lineWidth = 0.6; // tiny overdraw hides anti-alias seams between faces
-    const override = fabric.pieceColors?.[pn.piece];
-    let fill = override || base;
-    if (!override && fabric.mode === 'linear') {
+  const b = garment.model ? garment.washBounds : garment.bounds;
+  const fillFor = (c, pieceId) => {
+    const override = fabric.pieceColors?.[pieceId];
+    if (override) return override;
+    if (fabric.mode === 'linear') {
       const a = rad(fabric.angle ?? 90), dx = Math.cos(a), dy = Math.sin(a);
       const half = Math.abs(dx) * b.w / 2 + Math.abs(dy) * b.h / 2;
       const g = c.createLinearGradient(b.cx - dx * half, b.cy + dy * half, b.cx + dx * half, b.cy - dy * half);
-      g.addColorStop(0, base); g.addColorStop(1, fabric.color2 || '#000'); fill = g;
-    } else if (!override && fabric.mode === 'radial') {
+      g.addColorStop(0, base); g.addColorStop(1, fabric.color2 || '#000'); return g;
+    }
+    if (fabric.mode === 'radial') {
       const g = c.createRadialGradient(b.cx, b.y0 + b.h * 0.6, 0, b.cx, b.y0 + b.h * 0.6, Math.max(b.w, b.h) * 0.62);
-      g.addColorStop(0, base); g.addColorStop(1, fabric.color2 || '#000'); fill = g;
+      g.addColorStop(0, base); g.addColorStop(1, fabric.color2 || '#000'); return g;
     }
-    c.fillStyle = fill; c.strokeStyle = fill;
-    c.fill(); c.stroke();
-    if (overlays) {
-      c.clip();
-      const f = overlays.faces[pn.side > 0 ? 0 : 1], r = overlays.rect;
-      // overlay canvas row 0 = garment top, so flip y while drawing in garment space
-      c.save(); c.translate(r.x0, r.y0 + r.h); c.scale(1, -1);
-      const amt = fabric.washAmt ?? 0.8;
-      if (f.tintColored) { c.globalAlpha = Math.min(1, amt * 1.1); c.drawImage(f.tintColored, 0, 0, r.w, r.h); }
-      if (f.dark) { c.globalAlpha = amt * 0.9; c.drawImage(f.dark, 0, 0, r.w, r.h); }
-      if (f.light) { c.globalAlpha = amt; c.drawImage(f.light, 0, 0, r.w, r.h); }
-      c.restore();
+    return base;
+  };
+  const drawOverlay = (pn) => {
+    if (!overlays) return;
+    const f = overlays.faces[pn.side > 0 ? 0 : 1], r = overlays.rect;
+    c.save(); c.translate(r.x0, r.y0 + r.h); c.scale(1, -1);
+    const amt = fabric.washAmt ?? 0.8;
+    if (f.tintColored) { c.globalAlpha = Math.min(1, amt * 1.1); c.drawImage(f.tintColored, 0, 0, r.w, r.h); }
+    if (f.dark) { c.globalAlpha = amt * 0.9; c.drawImage(f.dark, 0, 0, r.w, r.h); }
+    if (f.light) { c.globalAlpha = amt; c.drawImage(f.light, 0, 0, r.w, r.h); }
+    c.restore();
+  };
+  for (const pn of garment.panels) {
+    const piece = garment.pieces.find(p => p.id === pn.piece);
+    c.save();
+    if (pn.localPoly) {
+      // curved (sleeve) faces: clip to their half of the pattern piece, draw in approximate garment space
+      c.translate(piece.sx, piece.sy);
+      c.beginPath(); pn.localPoly.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath();
+      c.lineWidth = 0.6; c.strokeStyle = fabric.pieceColors?.[pn.piece] || base; c.stroke(); c.clip();
+      c.transform(...pn.fit);
+      c.fillStyle = fillFor(c, pn.piece); c.fillRect(b.x0 - 60, b.y0 - 60, b.w + 120, b.h + 120);
+      drawOverlay(pn);
+    } else {
+      c.transform(...faceMatrix(pn, piece));
+      c.beginPath(); pn.outline.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath();
+      c.lineWidth = 0.6; // tiny overdraw hides anti-alias seams between faces
+      const fill = fillFor(c, pn.piece);
+      c.fillStyle = fill; c.strokeStyle = fill; c.fill(); c.stroke();
+      c.clip(); drawOverlay(pn);
     }
+    c.restore();
+  }
+  // pieces with no procedural panel: neck ribs (plain) and real-model pieces (gradient + wash in sheet space)
+  for (const p of garment.pieces) {
+    if (garment.panels.some(pn => pn.piece === p.id)) continue;
+    c.save(); c.translate(p.sx, p.sy); piecePath(c, p);
+    if (!garment.model) { c.fillStyle = fabric.pieceColors?.[p.id] || base; c.fill(); c.restore(); continue; }
+    c.lineWidth = 0.5; c.strokeStyle = fabric.pieceColors?.[p.id] || base; c.stroke(); c.clip();
+    c.translate(-p.sx, -p.sy); c.translate(0, garment.sheet.h); c.scale(1, -1); // y up, like garment space
+    c.fillStyle = fillFor(c, p.id); c.fillRect(-10, -10, garment.sheet.w + 20, garment.sheet.h + 20);
+    drawOverlay({ side: p.id.startsWith('back') || p.id === 'yoke' ? -1 : 1 });
     c.restore();
   }
   // stitching

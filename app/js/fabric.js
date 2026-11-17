@@ -119,7 +119,7 @@ export function normalMapCanvas(type) {
 /* ---------- garment-space overlays: light (bleach), dark (shade), tint (second colour) ---------- */
 // Returns { canvas: [front, back], rect: {x0,y0,w,h}, ppc } — draw with ctx in garment space.
 export function buildOverlays(garment, fabric) {
-  const b = garment.bounds;
+  const b = garment.washBounds || garment.bounds;
   const pad = 6;
   const rect = { x0: b.x0 - pad, y0: b.y0 - pad, w: b.w + 2 * pad, h: b.h + 2 * pad };
   const ppc = Math.min(6, 1400 / Math.max(rect.w, rect.h));

@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { buildGarmentGroup } from './mesh.js';
 import { normalMapCanvas, FABRICS } from './fabric.js';
 import { makeCanvas, mulberry, rad, clamp, mixHex } from './util.js';
@@ -104,10 +106,92 @@ export class Studio {
     const hanger = new THREE.MeshStandardMaterial({ color: 0xb08a5c, roughness: 0.45, metalness: 0.0 });
     const cord = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
     const aglet = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.35, metalness: 0.8 });
-    return { main, rib, inner, trim, label, hanger, cord, aglet };
+    // folded edges (hems, cuffs) take the colour of their piece
+    const edgeCache = {};
+    const edge = (pieceId) => {
+      const col = (this._fabric?.pieceColors?.[pieceId]) || this._fabric?.color || '#ffffff';
+      const k = pieceId;
+      if (!edgeCache[k]) edgeCache[k] = new THREE.MeshStandardMaterial({ roughness: 0.95 });
+      edgeCache[k].color.set(col);
+      return edgeCache[k];
+    };
+    this._edgeCache = edgeCache;
+    const button = new THREE.MeshPhysicalMaterial({ color: 0xf2f0ea, roughness: 0.28, clearcoat: 0.6, clearcoatRoughness: 0.2 });
+    const thread = new THREE.MeshStandardMaterial({ color: 0xe9e6df, roughness: 0.9 });
+    return { main, rib, inner, trim, label, hanger, cord, aglet, edge, button, thread };
+  }
+
+  loadGLB(url) {
+    this._glb ??= {};
+    if (!this._glb[url]) { const l = new GLTFLoader(); l.setMeshoptDecoder(MeshoptDecoder); this._glb[url] = l.loadAsync(url); }
+    return this._glb[url];
+  }
+  // garments from real cloth-sim models: the UVs are the sewing pattern, remapped onto the atlas sheet
+  async setModelGarment(g, opts) {
+    const token = (this._token = (this._token || 0) + 1);
+    const gltf = await this.loadGLB(g.glb);
+    if (token !== this._token) return;
+    this.garment = g;
+    for (const ch of [...this.garmentRoot.children]) { this.garmentRoot.remove(ch); ch.traverse(o => o.geometry && o.geometry.dispose()); }
+    const group = new THREE.Group(), U = g.uvMap, sh = g.sheet;
+    gltf.scene.updateMatrixWorld(true);
+    const toFloat = (a, n) => { const f = new Float32Array(a.count * n); for (let i = 0; i < a.count; i++) for (let k = 0; k < n; k++) f[i * n + k] = a.getComponent(i, k); return new THREE.BufferAttribute(f, n); };
+    const panelMeshes = [];
+    const box = new THREE.Box3();
+    gltf.scene.traverse(o => {
+      if (!o.isMesh) return;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', toFloat(o.geometry.attributes.position, 3));
+      geo.setAttribute('normal', toFloat(o.geometry.attributes.normal, 3));
+      if (o.geometry.attributes.uv) geo.setAttribute('uv', toFloat(o.geometry.attributes.uv, 2));
+      geo.setIndex(o.geometry.index);
+      geo.applyMatrix4(o.matrixWorld); geo.scale(100, 100, 100); // metres → cm
+      const name = o.material?.name || '';
+      if (name.startsWith('Fabric')) {
+        const uv = geo.attributes.uv;
+        // which piece does a point of the original UV layout belong to? (bounding boxes first, then the outline)
+        const boxes = g.pieces.map(p => [p.sx0 - 0.8, p.sy0 - 0.8, p.sx0 + p.w + 0.8, p.sy0 + p.h + 0.8, p]);
+        const inPoly = (x, y, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
+        const pieceOf = (x, y) => {
+          const cand = boxes.filter(b => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]);
+          if (cand.length <= 1) return cand[0]?.[4];
+          return (cand.find(b => inPoly(x - b[4].sx0, y - b[4].sy0, b[4].poly)) || cand.sort((a, b) => (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]))[0])[4];
+        };
+        for (let i = 0; i < uv.count; i++) {
+          let sx = (uv.getX(i) - U.u0) * U.k + U.M, sy = (U.v1 - (1 - uv.getY(i))) * U.k + U.M; // glTF flips V
+          const p = pieceOf(sx, sy);
+          if (p) { sx += p.sx - p.sx0; sy += p.sy - p.sy0; }
+          uv.setXY(i, sx / sh.w, 1 - sy / sh.h);
+        }
+        geo.computeBoundingBox(); box.union(geo.boundingBox);
+        const outer = new THREE.Mesh(geo, this.mats.main); outer.castShadow = outer.receiveShadow = true; outer.userData = { panel: { model: true }, pick: true };
+        const inner = new THREE.Mesh(geo, this.mats.inner); inner.receiveShadow = true;
+        group.add(outer, inner); panelMeshes.push(outer);
+      } else {
+        const m = new THREE.Mesh(geo, name.startsWith('Thread') ? this.mats.thread : this.mats.button);
+        m.castShadow = m.receiveShadow = true; group.add(m);
+      }
+    });
+    if (opts.hanger) {
+      const y1 = box.max.y, zc = (box.min.z + box.max.z) / 2 - 3;
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 6, 12), this.mats.hanger); stem.position.set(0, y1 + 1, zc);
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.3, 10, 40, Math.PI * 1.35), this.mats.hanger); arc.position.set(-2.6, y1 + 4, zc); arc.rotation.z = -0.1;
+      for (const m of [stem, arc]) { m.castShadow = true; group.add(m); }
+    }
+    const top = box.max.y + (opts.hanger ? 7 : 0);
+    g.bounds = { x0: box.min.x, x1: box.max.x, y0: box.min.y, y1: top, cx: (box.min.x + box.max.x) / 2, cy: (box.min.y + top) / 2, zc: (box.min.z + box.max.z) / 2 };
+    g.bounds.w = g.bounds.x1 - g.bounds.x0; g.bounds.h = g.bounds.y1 - g.bounds.y0;
+    this.garmentRoot.add(group);
+    this.panelMeshes = panelMeshes;
+    this.garmentRoot.position.set(-g.bounds.cx, -g.bounds.cy, -g.bounds.zc);
+    this.updateNormalRepeat();
+    if (!this._framed || opts.reframe) { this.frame(); this._framed = true; }
+    this.dirty = true;
   }
 
   setGarment(garment, opts) {
+    if (garment.model) return this.setModelGarment(garment, opts);
+    this._token = (this._token || 0) + 1;
     this.garment = garment;
     for (const ch of [...this.garmentRoot.children]) { this.garmentRoot.remove(ch); ch.traverse(o => o.geometry && o.geometry.dispose()); }
     const { group, panelMeshes } = buildGarmentGroup(garment, this.mats, opts);
@@ -134,6 +218,8 @@ export class Studio {
   }
 
   updateFabric(fabric, sheet) {
+    this._fabric = fabric;
+    for (const [k, m] of Object.entries(this._edgeCache || {})) m.color.set(fabric.pieceColors?.[k] || fabric.color);
     const F = FABRICS.find(f => f.id === fabric.type) || FABRICS[0];
     const m = this.mats.main;
     if (this._fabType !== F.id) { m.normalMap = this._nm(F.id); this._fabType = F.id; }
@@ -143,7 +229,7 @@ export class Studio {
     this.mats.rib.normalScale.set(rs, rs);
     this.mats.rib.roughness = F.rough;
     this._tileCm = F.tileCm * (fabric.knit ?? 1);
-    const inner = mixHex(fabric.color, '#000000', 0.32);
+    const inner = mixHex(fabric.color, '#000000', 0.55);
     this.mats.inner.color.set(inner);
     this.mats.trim.color.set(fabric.pieceColors?.trim || fabric.color);
     this.mats.trim.normalScale.set(rs, rs);

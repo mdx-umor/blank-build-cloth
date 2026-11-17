@@ -1,5 +1,5 @@
 // Design Master — application controller.
-import { buildGarment, GARMENT_LIST, garmentThumbSVG } from './garments.js';
+import { buildGarment, GARMENT_LIST, garmentThumbSVG, isModelGarment, modelLoaded, loadModelGarment } from './garments.js';
 import { Studio, GOBOS, goboCanvas } from './scene.js';
 import { PatternEditor } from './editor.js';
 import { FABRICS, WASHES, SWATCHES, buildOverlays } from './fabric.js';
@@ -15,7 +15,7 @@ const FACTORY_SCENE = { backdrop: true, bgColor: '#ebeae8', bgBright: 1, gobo: '
 const DEFAULT_DOC = () => ({
   v: 1, name: 'Untitled design', garment: 'tee', items: [],
   fabric: { color: '#ffffff', mode: 'solid', color2: '#5b5bd6', angle: 90, type: 'jersey', knit: 1, relief: 0.6, wash: 'none', washAmt: 0.8, washSeed: 0, heather: false, wrinkles: 0.8, pieceColors: {} },
-  details: { label: true, labelText: 'DESIGN MASTER', labelColor: '#1f2330', labelInk: '#ffffff', cord: '#ffffff' },
+  details: { label: true, labelText: 'DESIGN MASTER', labelColor: '#1f2330', labelInk: '#ffffff', cord: '#ffffff', buttons: '#f2f0ea' },
   scene: { ...FACTORY_SCENE, ...loadLook() },
   view: { marks: true, unit: 'cm' },
 });
@@ -27,7 +27,9 @@ const COLOR_GROUPS = [
   { id: 'pocket', name: 'Pocket', pieces: ['pocket'] },
   { id: 'ribs', name: 'Cuffs & waistband', pieces: ['ribF', 'ribB', 'cuffL', 'cuffR'] },
   { id: 'back', name: 'Back', pieces: ['back'] },
-  { id: 'trim', name: 'Neck rib & straps', pieces: ['trim'] },
+  { id: 'trim', name: 'Neck rib & straps', pieces: ['neckF', 'neckB', 'trim'] },
+  { id: 'collar', name: 'Collar', pieces: ['collar', 'collarStand'] },
+  { id: 'yoke', name: 'Back yoke', pieces: ['yoke'] },
 ];
 const RENDER_SIZES = [
   [2000, 2500, '4:5 · catalogue'], [1600, 2000, '4:5'], [3000, 3750, '4:5 · large'], [1200, 1500, '4:5 · web'],
@@ -54,12 +56,18 @@ window.DM = app; // handy for debugging from the console
 
 const studio = new Studio($('#gl'));
 const editor = new PatternEditor($('#pat'), app);
+app.studio = studio;
 
 /* ---------- garment / fabric pipeline ---------- */
 function geoKey() { const d = app.doc; return [d.garment, d.fabric.wrinkles, d.details.label, d.scene.hanger].join('|'); }
 let lastGeoKey = '';
-function applyGarment(id, { reframe = false } = {}) {
+async function applyGarment(id, { reframe = false } = {}) {
   app.doc.garment = id;
+  if (isModelGarment(id) && !modelLoaded(id)) {
+    toast('Loading the 3D model…', 8000);
+    try { await loadModelGarment(id); } catch (e) { console.error(e); toast('Could not load the 3D model.'); return; }
+    if (app.doc.garment !== id) return;
+  }
   app.garment = buildGarment(id);
   // keep artwork on matching pieces; anything else lands on the front
   for (const it of app.doc.items) {
@@ -69,8 +77,8 @@ function applyGarment(id, { reframe = false } = {}) {
   }
   // garments with built-in contrast parts (baseball tee) set them; leaving such a garment removes them again
   const pc = app.doc.fabric.pieceColors || {};
-  if (pc._auto && pc._auto !== id) { const c = pc._autoColor; for (const k of ['sleeveL', 'sleeveR', 'trim']) if (pc[k] === c) delete pc[k]; delete pc._auto; delete pc._autoColor; }
-  if (app.garment.contrast && pc._auto !== id && !pc.sleeveL) Object.assign(pc, { sleeveL: app.garment.contrast, sleeveR: app.garment.contrast, trim: app.garment.contrast, _auto: id, _autoColor: app.garment.contrast });
+  if (pc._auto && pc._auto !== id) { const c = pc._autoColor; for (const k of ['sleeveL', 'sleeveR', 'trim', 'neckF', 'neckB']) if (pc[k] === c) delete pc[k]; delete pc._auto; delete pc._autoColor; }
+  if (app.garment.contrast && pc._auto !== id && !pc.sleeveL) Object.assign(pc, { sleeveL: app.garment.contrast, sleeveR: app.garment.contrast, trim: app.garment.contrast, neckF: app.garment.contrast, neckB: app.garment.contrast, _auto: id, _autoColor: app.garment.contrast });
   app.doc.fabric.pieceColors = pc;
   rebuildOverlays();
   rebuildBase();
@@ -86,7 +94,7 @@ function applyGarment(id, { reframe = false } = {}) {
 function rebuildGeometry(reframe = false) {
   const d = app.doc;
   studio.setGarment(app.garment, { wrinkles: d.fabric.wrinkles * 1.6, label: d.details.label, hanger: d.scene.hanger, res: 100, reframe, seed: 3 });
-  studio.mats.cord.color.set(d.details.cord || '#ffffff');
+  studio.mats.cord.color.set(d.details.cord || '#ffffff'); studio.mats.button.color.set(d.details.buttons || '#f2f0ea');
   lastGeoKey = geoKey();
 }
 const rebuildGeometrySoon = debounce(() => { if (geoKey() !== lastGeoKey) rebuildGeometry(false); }, 120);
@@ -396,7 +404,7 @@ function renderFabric() {
     ${slider('fabric.knit', 'Knit size', 0.4, 3, 0.05, { suf: '×' })}
     ${slider('fabric.relief', 'Texture', 0, 1.6, 0.05)}
     ${toggleRow('fabric.heather', 'Heather (melange)')}
-    ${slider('fabric.wrinkles', 'Wrinkles', 0, 1.5, 0.05)}`);
+    ${g.model ? '' : slider('fabric.wrinkles', 'Wrinkles', 0, 1.5, 0.05)}`);
   html += sec('Wash & dye', `
     ${selectRow('fabric.wash', 'Effect', WASHES.map(w => [w.id, w.name]))}
     ${f.wash !== 'none' ? slider('fabric.washAmt', 'Strength', 0, 1, 0.01, { pct: true }) : ''}
@@ -409,6 +417,7 @@ function renderFabric() {
     if (d.label) det += `<div class="row"><label>Label text</label><div class="ctl"><input type="text" data-k="details.labelText" value="${esc(d.labelText)}" maxlength="24"></div></div>` + colorRow('details.labelColor', 'Label colour') + colorRow('details.labelInk', 'Label ink');
   }
   if (g.extras.strings.length) det += colorRow('details.cord', 'Drawcords');
+  if (g.model) det += colorRow('details.buttons', 'Buttons');
   if (det) html += sec('Details', det);
   $('#tabFabric').innerHTML = html;
 }
@@ -468,7 +477,7 @@ function onValue(path, live) {
     else { rebuildBase(); studio.updateFabric(app.doc.fabric); }
     if (!live && ['mode', 'wash', 'heather', 'color'].includes(key)) renderFabric();
   } else if (scope === 'details') {
-    updateLabel(); studio.mats.cord.color.set(app.doc.details.cord || '#fff');
+    updateLabel(); studio.mats.cord.color.set(app.doc.details.cord || '#fff'); studio.mats.button.color.set(app.doc.details.buttons || '#f2f0ea');
     if (key === 'label') { rebuildGeometrySoon(); if (!live) renderFabric(); }
   } else if (scope === 'scene') {
     studio.updateScene(app.doc.scene);
@@ -588,12 +597,18 @@ function onAdd(kind) {
 
 /* ====================================================================== */
 /* 3D: drag artwork directly on the garment */
+function hitPiece(hit) {
+  if (hit.panel?.piece) return app.garment.pieces.find(p => p.id === hit.panel.piece);
+  const sh = app.garment.sheet;
+  return editor.pieceAt(hit.uv.x * sh.w, (1 - hit.uv.y) * sh.h) || null;
+}
 function bind3DDrag() {
   const pane = $('#viewPane'), cv = $('#gl');
   let drag = null;
   const toSheet = (hit) => { const sh = app.garment.sheet; return [hit.uv.x * sh.w, (1 - hit.uv.y) * sh.h]; };
   const itemAtHit = (hit) => {
-    const [sx, sy] = toSheet(hit), piece = app.garment.pieces.find(p => p.id === hit.panel.piece);
+    const [sx, sy] = toSheet(hit), piece = hitPiece(hit);
+    if (!piece) return { it: null };
     const lx = sx - piece.sx, ly = sy - piece.sy;
     for (let i = app.doc.items.length - 1; i >= 0; i--) { const it = app.doc.items[i]; if (it.piece === piece.id && !it.hidden && !it.locked && hitItem(it, app.assets, lx, ly, 0.3)) return { it, lx, ly, piece }; }
     return { it: null, lx, ly, piece };
@@ -614,7 +629,8 @@ function bind3DDrag() {
     }
     e.stopPropagation();
     const hit = studio.pick(e); if (!hit) return;
-    const [sx, sy] = toSheet(hit), piece = app.garment.pieces.find(p => p.id === hit.panel.piece);
+    const [sx, sy] = toSheet(hit), piece = hitPiece(hit);
+    if (!piece) return;
     const it = drag.it;
     if (piece.id !== drag.piece) { drag.piece = piece.id; drag.dx = 0; drag.dy = 0; it.piece = piece.id; }
     it.x = sx - piece.sx - drag.dx; it.y = sy - piece.sy - drag.dy; drag.moved = true;
@@ -655,7 +671,8 @@ function bindFiles() {
       if (p) at = { piece: p.id, x: x - p.sx, y: y - p.sy };
     } else if (e.target === $('#gl')) {
       const hit = studio.pick(e);
-      if (hit) { const sh = app.garment.sheet, p = app.garment.pieces.find(q => q.id === hit.panel.piece); at = { piece: p.id, x: hit.uv.x * sh.w - p.sx, y: (1 - hit.uv.y) * sh.h - p.sy }; }
+      const p = hit && hitPiece(hit);
+      if (p) { const sh = app.garment.sheet; at = { piece: p.id, x: hit.uv.x * sh.w - p.sx, y: (1 - hit.uv.y) * sh.h - p.sy }; }
     }
     for (const f of e.dataTransfer.files) await addImageFile(f, at);
   });
@@ -855,7 +872,7 @@ async function snapshot3D() {
 function openGarments() {
   const groups = [...new Set(GARMENT_LIST.map(g => g.group))];
   $('#garmentGrid').innerHTML = groups.map(gr => `<h5>${gr}</h5>` + GARMENT_LIST.filter(g => g.group === gr).map(g => {
-    const built = buildGarment(g.id);
+    const built = g.model ? g : buildGarment(g.id);
     return `<button class="gcard ${g.id === app.doc.garment ? 'on' : ''}" data-g="${g.id}"><span class="gimg">${garmentThumbSVG(built, '#ffffff')}</span><b>${g.name}</b><small>${g.cut}</small></button>`;
   }).join('')).join('');
   $('#garmentDlg').hidden = false;
