@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { buildGarmentGroup } from './mesh.js';
+import { buildGarmentGroup, cavityAO } from './mesh.js';
 import { normalMapCanvas, FABRICS } from './fabric.js';
 import { makeCanvas, mulberry, rad, clamp, mixHex } from './util.js';
 
@@ -56,10 +57,12 @@ export class Studio {
     this.camera = new THREE.PerspectiveCamera(28, 1, 1, 3000);
     this.controls = new OrbitControls(this.camera, canvas);
     Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, minDistance: 40, maxDistance: 600, minPolarAngle: rad(35), maxPolarAngle: rad(118), minAzimuthAngle: -rad(70), maxAzimuthAngle: rad(70), screenSpacePanning: true });
-    const pm = new THREE.PMREMGenerator(r);
+    const pm = this.pmrem = new THREE.PMREMGenerator(r);
     this.envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture;
     this.scene.environment = this.envTex;
     this.scene.environmentIntensity = 0.55;
+    // studio HDRI (soft photo-studio light); falls back to the built-in room light
+    new RGBELoader().loadAsync('assets/studio.hdr').then(t => { t.mapping = THREE.EquirectangularReflectionMapping; this.hdrTex = pm.fromEquirectangular(t).texture; t.dispose(); this.updateScene(this.sc || {}); }).catch(() => {});
 
     this.turntable = new THREE.Group(); this.scene.add(this.turntable);
     this.garmentRoot = new THREE.Group(); this.turntable.add(this.garmentRoot);
@@ -81,6 +84,10 @@ export class Studio {
 
     this.atlasTex = new THREE.CanvasTexture(makeCanvas(4, 4));
     this.atlasTex.colorSpace = THREE.SRGBColorSpace; this.atlasTex.anisotropy = r.capabilities.getMaxAnisotropy();
+    // inside of the garment: inside prints + the woven label (same UV layout as the outside)
+    this.insideTex = new THREE.CanvasTexture(makeCanvas(4, 4));
+    this.insideTex.colorSpace = THREE.SRGBColorSpace; this.insideTex.anisotropy = r.capabilities.getMaxAnisotropy();
+    this.fabUniforms = { uBright: { value: 1 }, uContrast: { value: 1 } };
     this.mats = this.makeMaterials();
     this.quality = 'adaptive'; this.moving = false; this.autoRotate = false;
     this.viewYaw = 0; this.targetYaw = 0;
@@ -98,11 +105,15 @@ export class Studio {
     this._nm = nm;
     const main = new THREE.MeshPhysicalMaterial({ map: this.atlasTex, roughness: 0.92, normalMap: nm('jersey'), normalScale: new THREE.Vector2(0.6, 0.6), sheen: 0.15, sheenRoughness: 0.8, sheenColor: new THREE.Color(0xffffff), side: THREE.FrontSide });
     const rib = main.clone(); rib.normalMap = nm('rib');
-    const inner = new THREE.MeshStandardMaterial({ color: 0xbbbbbb, roughness: 1, side: THREE.BackSide });
+    const inner = new THREE.MeshStandardMaterial({ map: this.insideTex, color: 0xc4c4c4, roughness: 1, side: THREE.BackSide });
+    // fabric brightness / contrast (applied to the fabric and its prints, like a photo adjustment)
+    for (const m of [main, rib, inner]) m.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, this.fabUniforms);
+      sh.fragmentShader = 'uniform float uBright; uniform float uContrast;\n' + sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor.rgb = clamp((diffuseColor.rgb - 0.5) * uContrast + 0.5, 0.0, 1.0) * uBright;');
+    };
     const trim = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.95, normalMap: nm('rib'), normalScale: new THREE.Vector2(0.5, 0.5), sheen: 0.2 });
     trim.normalMap = trim.normalMap.clone(); trim.normalMap.repeat.set(4, 1);
-    const labelTex = new THREE.CanvasTexture(makeCanvas(4, 4)); labelTex.colorSpace = THREE.SRGBColorSpace;
-    const label = new THREE.MeshStandardMaterial({ map: labelTex, roughness: 0.6, side: THREE.DoubleSide });
+    const label = new THREE.MeshStandardMaterial({ map: this.insideTex, roughness: 0.6, side: THREE.DoubleSide });
     const hanger = new THREE.MeshStandardMaterial({ color: 0xb08a5c, roughness: 0.45, metalness: 0.0 });
     const cord = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
     const aglet = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.35, metalness: 0.8 });
@@ -164,6 +175,7 @@ export class Studio {
           uv.setXY(i, sx / sh.w, 1 - sy / sh.h);
         }
         geo.computeBoundingBox(); box.union(geo.boundingBox);
+        cavityAO(geo, 0.8);
         const outer = new THREE.Mesh(geo, this.mats.main); outer.castShadow = outer.receiveShadow = true; outer.userData = { panel: { model: true }, pick: true };
         const inner = new THREE.Mesh(geo, this.mats.inner); inner.receiveShadow = true;
         group.add(outer, inner); panelMeshes.push(outer);
@@ -229,8 +241,11 @@ export class Studio {
     this.mats.rib.normalScale.set(rs, rs);
     this.mats.rib.roughness = F.rough;
     this._tileCm = F.tileCm * (fabric.knit ?? 1);
-    const inner = mixHex(fabric.color, '#000000', 0.55);
-    this.mats.inner.color.set(inner);
+    this.fabUniforms.uBright.value = fabric.bright ?? 1;
+    this.fabUniforms.uContrast.value = fabric.contrast ?? 1;
+    // fold shadows: cavity occlusion stored as vertex colours
+    const ao = fabric.ao !== false;
+    for (const mat of [this.mats.main, this.mats.rib]) if (mat.vertexColors !== ao) { mat.vertexColors = ao; mat.needsUpdate = true; }
     this.mats.trim.color.set(fabric.pieceColors?.trim || fabric.color);
     this.mats.trim.normalScale.set(rs, rs);
     this.updateNormalRepeat();
@@ -256,7 +271,17 @@ export class Studio {
     this.dirty = true;
   }
 
-  setLabel(canvas) { const t = this.mats.label.map; t.image = canvas; t.needsUpdate = true; this.dirty = true; }
+  setInside(canvas) {
+    if (this.insideTex.image !== canvas || canvas.width !== this._iw || canvas.height !== this._ih) {
+      const old = this.insideTex;
+      this.insideTex = new THREE.CanvasTexture(canvas);
+      this.insideTex.colorSpace = THREE.SRGBColorSpace; this.insideTex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+      this.mats.inner.map = this.insideTex; this.mats.label.map = this.insideTex;
+      this.mats.inner.needsUpdate = this.mats.label.needsUpdate = true;
+      this._iw = canvas.width; this._ih = canvas.height; old.dispose();
+    } else this.insideTex.needsUpdate = true;
+    this.dirty = true;
+  }
 
   updateScene(sc) {
     this.sc = sc;
@@ -269,7 +294,8 @@ export class Studio {
     const side = rad(sc.lightSide ?? -35), up = rad(sc.lightHeight ?? 40), dist = 520;
     this.key.position.set(Math.sin(side) * Math.cos(up) * dist, Math.sin(up) * dist, Math.cos(side) * Math.cos(up) * dist);
     this.key.target.position.set(0, 0, -20);
-    this.key.intensity = (sc.lightPower ?? 1) * 3.2;
+    const contrast = sc.bgContrast ?? 1; // backdrop contrast: stronger key light, weaker ambient
+    this.key.intensity = (sc.lightPower ?? 1) * 3.2 * contrast;
     this.key.decay = 0;
     this.key.penumbra = 0.6;
     this.key.angle = rad(26);
@@ -280,9 +306,12 @@ export class Studio {
     if (gid !== 'none') {
       const key = gid + !!sc.goboInvert;
       if (this._gobo !== key) { const t = new THREE.CanvasTexture(goboCanvas(gid, !!sc.goboInvert)); t.colorSpace = THREE.SRGBColorSpace; this.key.map = t; this._gobo = key; }
-      this.hemi.intensity = 0.42 * (sc.ambient ?? 1);
-    } else { this.key.map = null; this._gobo = null; this.hemi.intensity = 0.55 * (sc.ambient ?? 1); }
-    this.scene.environmentIntensity = sc.envPower ?? 0.55;
+      this.hemi.intensity = 0.42 * (sc.ambient ?? 1) / contrast;
+    } else { this.key.map = null; this._gobo = null; this.hemi.intensity = 0.55 * (sc.ambient ?? 1) / contrast; }
+    const useHdr = sc.hdri !== false && this.hdrTex;
+    this.scene.environment = useHdr ? this.hdrTex : this.envTex;
+    this.scene.environmentIntensity = useHdr ? (sc.hdriPower ?? 1) * 0.6 : (sc.envPower ?? 0.55);
+    this.scene.environmentRotation.set(0, rad(sc.hdriRot ?? 0), 0);
     this.fill.intensity = 0.35 * (sc.fill ?? 1);
     this.mats.hanger.color.set(sc.hangerColor || '#b08a5c');
     this.mats.hanger.metalness = sc.hangerColor === '#c0c4c8' ? 0.85 : 0;
@@ -334,6 +363,142 @@ export class Studio {
     const rc = new THREE.Raycaster(); rc.setFromCamera(p, this.camera);
     const hit = rc.intersectObjects(this.panelMeshes || [], false)[0];
     return hit ? { mesh: hit.object, uv: hit.uv, panel: hit.object.userData.panel } : null;
+  }
+
+  /* ---------------- wrap over seams ----------------
+     A wrapped print is projected onto the 3D garment from its anchor point (planar decal along the
+     surface normal there) and baked back into the pattern texture, so it continues across seams. */
+  _uvIndex() {
+    if (this._uvIdx?.g === this.garment) return this._uvIdx;
+    const tris = [];
+    for (const m of this.panelMeshes || []) {
+      if (m.userData.panel?.role === 'label') continue;
+      const g = m.geometry, pos = g.attributes.position, nrm = g.attributes.normal, uv = g.attributes.uv, idx = g.index;
+      const n = idx ? idx.count : pos.count;
+      tris.push({ pos, nrm, uv, idx, n });
+    }
+    return (this._uvIdx = { g: this.garment, tris });
+  }
+  // 3D point + normal on the garment at a pattern (sheet, cm) position, or null
+  surfaceAt(sx, sy) {
+    const sh = this.garment.sheet, u = sx / sh.w, v = 1 - sy / sh.h;
+    for (const t of this._uvIndex().tris) {
+      const { pos, nrm, uv, idx, n } = t;
+      for (let i = 0; i < n; i += 3) {
+        const a = idx ? idx.getX(i) : i, b = idx ? idx.getX(i + 1) : i + 1, c = idx ? idx.getX(i + 2) : i + 2;
+        const ax = uv.getX(a), ay = uv.getY(a), bx = uv.getX(b), by = uv.getY(b), cx = uv.getX(c), cy = uv.getY(c);
+        if (u < Math.min(ax, bx, cx) || u > Math.max(ax, bx, cx) || v < Math.min(ay, by, cy) || v > Math.max(ay, by, cy)) continue;
+        const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (Math.abs(d) < 1e-14) continue;
+        const w1 = ((by - cy) * (u - cx) + (cx - bx) * (v - cy)) / d, w2 = ((cy - ay) * (u - cx) + (ax - cx) * (v - cy)) / d, w3 = 1 - w1 - w2;
+        if (w1 < -1e-4 || w2 < -1e-4 || w3 < -1e-4) continue;
+        const P = new THREE.Vector3(), N = new THREE.Vector3(), tmp = new THREE.Vector3();
+        for (const [k, w] of [[a, w1], [b, w2], [c, w3]]) { P.addScaledVector(tmp.fromBufferAttribute(pos, k), w); N.addScaledVector(tmp.fromBufferAttribute(nrm, k), w); }
+        return { P, N: N.normalize() };
+      }
+    }
+    return null;
+  }
+  // decal frame for a print centred at sheet (sx, sy), rotated rot° (clockwise on the pattern)
+  wrapFrame(sx, sy, rotDeg, flip) {
+    const c = this.surfaceAt(sx, sy); if (!c) return null;
+    const e = 0.6;
+    const px = this.surfaceAt(sx + e, sy) || this.surfaceAt(sx - e, sy), py = this.surfaceAt(sx, sy + e) || this.surfaceAt(sx, sy - e);
+    if (!px || !py) return null;
+    const sgx = this.surfaceAt(sx + e, sy) ? 1 : -1, sgy = this.surfaceAt(sx, sy + e) ? 1 : -1;
+    const Rp = px.P.clone().sub(c.P).multiplyScalar(sgx), Dp = py.P.clone().sub(c.P).multiplyScalar(sgy);
+    const N = c.N.clone();
+    Rp.addScaledVector(N, -Rp.dot(N)).normalize();
+    Dp.addScaledVector(N, -Dp.dot(N)).addScaledVector(Rp, -Dp.dot(Rp)).normalize();
+    const a = rotDeg * Math.PI / 180;
+    const R = Rp.clone().multiplyScalar(Math.cos(a)).addScaledVector(Dp, Math.sin(a));
+    const D = Rp.clone().multiplyScalar(-Math.sin(a)).addScaledVector(Dp, Math.cos(a));
+    if (flip) R.negate();
+    return { O: c.P, R, U: D.negate(), N };
+  }
+  bakeWrap(prints, W, H) {
+    const r = this.renderer;
+    if (!this._wrapMat) {
+      this._wrapMat = new THREE.ShaderMaterial({
+        uniforms: { map: { value: null }, O: { value: new THREE.Vector3() }, R: { value: new THREE.Vector3() }, U: { value: new THREE.Vector3() }, N: { value: new THREE.Vector3() }, S: { value: new THREE.Vector2(1, 1) }, depth: { value: 10 }, opacity: { value: 1 } },
+        vertexShader: 'varying vec3 vPos; varying vec3 vNrm; void main(){ vPos = position; vNrm = normal; gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0); }',
+        fragmentShader: `uniform sampler2D map; uniform vec3 O; uniform vec3 R; uniform vec3 U; uniform vec3 N; uniform vec2 S; uniform float depth; uniform float opacity;
+          varying vec3 vPos; varying vec3 vNrm;
+          void main(){ vec3 d = vPos - O; float u = dot(d, R) / S.x + 0.5; float v = dot(d, U) / S.y + 0.5;
+            if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) discard;
+            if (abs(dot(d, N)) > depth) discard;
+            if (dot(normalize(vNrm), N) < 0.05) discard;
+            vec4 c = texture2D(map, vec2(u, v)); gl_FragColor = vec4(c.rgb, c.a * opacity); }`,
+        side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true,
+        blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+      });
+    }
+    const mat = this._wrapMat;
+    const sc = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1);
+    for (const m of this.panelMeshes || []) if (m.userData.panel?.role !== 'label') { const bm = new THREE.Mesh(m.geometry, mat); bm.frustumCulled = false; sc.add(bm); } // drawn in UV space: never cull
+    const rt = new THREE.WebGLRenderTarget(W, H);
+    const prev = { target: r.getRenderTarget(), auto: r.autoClear, clear: r.getClearAlpha(), col: r.getClearColor(new THREE.Color()), tone: r.toneMapping };
+    r.setRenderTarget(rt); r.setClearColor(0x000000, 0); r.clear(); r.autoClear = false; r.toneMapping = THREE.NoToneMapping;
+    const texs = [];
+    for (const p of prints) {
+      const t = new THREE.CanvasTexture(p.raster); t.colorSpace = THREE.NoColorSpace; texs.push(t);
+      mat.uniforms.map.value = t; mat.uniforms.O.value.copy(p.f.O); mat.uniforms.R.value.copy(p.f.R); mat.uniforms.U.value.copy(p.f.U); mat.uniforms.N.value.copy(p.f.N);
+      mat.uniforms.S.value.set(p.w, p.h); mat.uniforms.depth.value = Math.max(6, (p.w + p.h) * 0.35); mat.uniforms.opacity.value = p.opacity ?? 1;
+      r.render(sc, cam);
+    }
+    const buf = new Uint8Array(W * H * 4);
+    r.readRenderTargetPixels(rt, 0, 0, W, H, buf);
+    r.setRenderTarget(prev.target); r.autoClear = prev.auto; r.setClearColor(prev.col, prev.clear); r.toneMapping = prev.tone;
+    rt.dispose(); texs.forEach(t => t.dispose());
+    const cv = makeCanvas(W, H), c = cv.getContext('2d'), im = c.createImageData(W, H);
+    const d = im.data;
+    for (let y = 0; y < H; y++) {
+      const src = (H - 1 - y) * W * 4, dst = y * W * 4;
+      for (let x = 0; x < W * 4; x += 4) {
+        const al = buf[src + x + 3]; if (!al) continue;
+        const k = 255 / al; // stored premultiplied
+        d[dst + x] = Math.min(255, buf[src + x] * k); d[dst + x + 1] = Math.min(255, buf[src + x + 1] * k); d[dst + x + 2] = Math.min(255, buf[src + x + 2] * k); d[dst + x + 3] = al;
+      }
+    }
+    c.putImageData(im, 0, 0);
+    this.dirty = true;
+    return cv;
+  }
+
+  /**
+   * Turntable video: one full turn of the garment, recorded from the WebGL canvas.
+   * Returns a Blob (MP4 where the browser can record it, otherwise WebM).
+   */
+  async recordTurntable({ width, height, seconds = 8, fps = 30, onProgress, signal }) {
+    const r = this.renderer;
+    const types = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+    if (!mime) throw new Error('This browser cannot record video.');
+    this.paused = true;
+    const prev = { pr: r.getPixelRatio(), aspect: this.camera.aspect, yaw: this.viewYaw };
+    try {
+      r.setPixelRatio(1); r.setSize(width, height, false);
+      this.camera.aspect = width / height; this.camera.updateProjectionMatrix();
+      const stream = this.canvas.captureStream(fps);
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
+      const chunks = []; rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      const done = new Promise(res => (rec.onstop = res));
+      rec.start(250);
+      const total = seconds * fps, base = this.viewYaw;
+      for (let f = 0; f <= total; f++) {
+        if (signal?.aborted) break;
+        this.turntable.rotation.y = base + (f / total) * Math.PI * 2;
+        this.controls.update();
+        r.render(this.scene, this.camera);
+        onProgress && onProgress(f, total);
+        await new Promise(res => setTimeout(res, 1000 / fps));
+      }
+      rec.stop(); await done;
+      return new Blob(chunks, { type: mime.split(';')[0] });
+    } finally {
+      this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw;
+      r.setPixelRatio(prev.pr); this.resize();
+      this.paused = false; this.dirty = true;
+    }
   }
 
   /**

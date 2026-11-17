@@ -1,8 +1,15 @@
 // Design Master — 2D sewing-pattern editor (canvas). Works in sheet centimetres.
+//
+// Mouse:  scroll = zoom · right-drag / middle-drag / Space-drag / Hand tool = move the sheet
+//         double-click empty sheet = fit · double-click text = edit it
+//         drag artwork = move (Ctrl/⌘ held = no snapping, Alt held = drag a copy)
+//         drag a corner square = scale · drag just outside a corner (or the top knob) = rotate
+//         Shift-click = add/remove from the selection · drag on empty sheet = selection box
+//         Shape tools: press on a piece and drag to draw (Shift = even), Esc cancels.
 import { drawItem, piecePath, itemCorners, hitItem, itemHeight } from './atlas.js';
-import { pointInPoly, clamp, deg, rad } from './util.js';
+import { pointInPoly, clamp, deg, rad, uid } from './util.js';
 
-const HANDLE = 7;
+const HANDLE = 7, RULER = 22;
 
 export class PatternEditor {
   constructor(canvas, app) {
@@ -16,11 +23,17 @@ export class PatternEditor {
     window.addEventListener('pointerup', e => this.up(e));
     canvas.addEventListener('wheel', e => this.wheel(e), { passive: false });
     canvas.addEventListener('dblclick', e => this.dbl(e));
-    window.addEventListener('keydown', e => { if (e.code === 'Space' && !isTyping(e)) { this.space = true; this.cursor(); } });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    window.addEventListener('keydown', e => {
+      if (isTyping(e)) return;
+      if (e.code === 'Space') { this.space = true; this.cursor(); }
+      if (e.key === 'Escape' && this.drag?.mode === 'draw') { this.drag = null; this.redraw(); }
+    });
     window.addEventListener('keyup', e => { if (e.code === 'Space') { this.space = false; this.cursor(); } });
     this.raf = 0;
   }
   get g() { return this.app.garment; }
+  get inside() { return this.app.doc.view?.side === 'in'; }
   resize() {
     const p = this.cv.parentElement, dpr = window.devicePixelRatio || 1;
     this.w = p.clientWidth; this.h = p.clientHeight;
@@ -29,30 +42,48 @@ export class PatternEditor {
     if (!this._fitted && this.g) { this.fit(); this._fitted = true; }
     this.redraw();
   }
+  // pieces shown in the current view: outside view hides inside-only pieces (label, facings)
+  visiblePieces() { return this.g.pieces.filter(p => this.inside ? true : !p.insideOnly); }
   fit() {
     if (!this.g || !this.w) return;
-    const sh = this.g.sheet, pad = 28;
-    const s = Math.min((this.w - pad * 2) / sh.w, (this.h - pad * 2 - 40) / sh.h);
-    this.view.s = s; this.view.ox = (this.w - sh.w * s) / 2; this.view.oy = (this.h - sh.h * s) / 2 + 14;
-    this.redraw();
+    const ps = this.visiblePieces();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of ps) { x0 = Math.min(x0, p.sx); y0 = Math.min(y0, p.sy); x1 = Math.max(x1, p.sx + p.w); y1 = Math.max(y1, p.sy + p.h); }
+    if (!isFinite(x0)) { x0 = 0; y0 = 0; x1 = this.g.sheet.w; y1 = this.g.sheet.h; }
+    x0 -= 4; y0 -= 6; x1 += 4; y1 += 10;
+    const padL = RULER + 64, padR = 20, padT = RULER + 20, padB = 70;
+    const s = Math.min((this.w - padL - padR) / (x1 - x0), (this.h - padT - padB) / (y1 - y0));
+    this.view.s = s; this.fitS = s;
+    this.view.ox = padL + ((this.w - padL - padR) - (x1 - x0) * s) / 2 - x0 * s;
+    this.view.oy = padT + ((this.h - padT - padB) - (y1 - y0) * s) / 2 - y0 * s;
+    this.redraw(); this.app.onZoom?.();
   }
   zoom(f, cx = this.w / 2, cy = this.h / 2) {
-    const v = this.view, ns = clamp(v.s * f, 0.8, 120);
+    const v = this.view, ns = clamp(v.s * f, 0.6, 140);
     v.ox = cx - (cx - v.ox) * ns / v.s; v.oy = cy - (cy - v.oy) * ns / v.s; v.s = ns;
-    this.redraw();
+    this.redraw(); this.app.onZoom?.();
   }
+  // 100 % = the whole pattern fitted in the pane
+  zoomPct() { return Math.round(this.view.s / (this.fitS || this.view.s) * 100); }
   toSheet(e) { const r = this.cv.getBoundingClientRect(); return [(e.clientX - r.left - this.view.ox) / this.view.s, (e.clientY - r.top - this.view.oy) / this.view.s]; }
   toScreen(x, y) { return [x * this.view.s + this.view.ox, y * this.view.s + this.view.oy]; }
-  pieceAt(x, y) { return this.g.pieces.find(p => pointInPoly(x - p.sx, y - p.sy, p.poly)); }
+  // piece-local "display" coordinates: in the inside view pieces are mirrored (seen from inside)
+  mirrorOf(p) { return this.inside && !p.noMirror; }
+  localPoly(p) { return this.mirrorOf(p) ? p.poly.map(([x, y]) => [p.w - x, y]) : p.poly; }
+  pieceAt(x, y) { return this.visiblePieces().find(p => pointInPoly(x - p.sx, y - p.sy, this.localPoly(p))); }
   piece(id) { return this.g.pieces.find(p => p.id === id); }
+  face() { return this.inside ? 'in' : 'out'; }
+  itemsHere() { const f = this.face(); return this.app.doc.items.filter(i => (i.face || 'out') === f); }
   cursor() {
-    const c = this.drag?.mode === 'pan' ? 'grabbing' : (this.space || this.tool === 'hand') ? 'grab' : this.hover === 'rot' ? 'crosshair' : this.hover === 'scale' ? 'nwse-resize' : this.hover === 'w' ? 'ew-resize' : this.hover === 'h' ? 'ns-resize' : this.hover === 'item' ? 'move' : 'default';
+    const t = this.drag?.mode;
+    const c = t === 'pan' ? 'grabbing' : (this.space || this.tool === 'hand') ? 'grab' : this.tool.startsWith('shape:') ? 'crosshair'
+      : this.hover === 'rot' ? 'grab' : this.hover === 'scale' ? 'nwse-resize' : this.hover === 'w' ? 'ew-resize' : this.hover === 'h' ? 'ns-resize' : this.hover === 'item' ? 'move' : 'default';
     this.cv.style.cursor = c;
   }
 
   /* ---------- hit testing ---------- */
   itemAt(x, y) {
-    const items = this.app.doc.items;
+    const items = this.itemsHere();
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i]; if (it.hidden || it.locked) continue;
       const p = this.piece(it.piece); if (!p) continue;
@@ -61,24 +92,34 @@ export class PatternEditor {
     return null;
   }
   handlesFor(it) {
-    const p = this.piece(it.piece); if (!p) return [];
+    const p = this.piece(it.piece); if (!p) return {};
     const c = itemCorners(it, this.app.assets).map(([x, y]) => this.toScreen(x + p.sx, y + p.sy));
     const a = rad(it.rot || 0);
     const topMid = [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
     const rot = [topMid[0] + Math.sin(a) * 26, topMid[1] - Math.cos(a) * 26];
     const hs = c.map((pt, i) => ({ type: 'scale', pt, i }));
     hs.push({ type: 'rot', pt: rot, from: topMid });
-    if (it.type === 'shape') {
+    if (it.type === 'shape' && it.shape !== 'line') {
       hs.push({ type: 'w', pt: [(c[1][0] + c[2][0]) / 2, (c[1][1] + c[2][1]) / 2] });
       hs.push({ type: 'h', pt: [(c[2][0] + c[3][0]) / 2, (c[2][1] + c[3][1]) / 2] });
     }
     return { hs, corners: c };
   }
   handleAt(e) {
-    const it = this.app.selected(); if (!it || it.locked) return null;
+    const it = this.app.selected();
+    if (!it || it.locked || this.app.selIds.length > 1 || (it.face || 'out') !== this.face()) return null;
     const r = this.cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-    const { hs } = this.handlesFor(it) || {};
+    const { hs, corners } = this.handlesFor(it);
     for (const h of hs || []) if (Math.hypot(h.pt[0] - mx, h.pt[1] - my) <= HANDLE + 3) return h;
+    // just outside a corner → rotate
+    if (corners) {
+      const cx = corners.reduce((s, p) => s + p[0], 0) / 4, cy = corners.reduce((s, p) => s + p[1], 0) / 4;
+      for (const p of corners) {
+        const d = Math.hypot(p[0] - mx, p[1] - my);
+        const out = Math.hypot(mx - cx, my - cy) > Math.hypot(p[0] - cx, p[1] - cy);
+        if (d > HANDLE + 2 && d < 26 && out) return { type: 'rot', pt: p };
+      }
+    }
     return null;
   }
 
@@ -87,8 +128,14 @@ export class PatternEditor {
     if (!this.g) return;
     this.cv.setPointerCapture?.(e.pointerId);
     const [x, y] = this.toSheet(e);
-    if (e.button === 1 || this.space || this.tool === 'hand') { this.drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, ox: this.view.ox, oy: this.view.oy }; this.cursor(); return; }
+    if (e.button === 1 || e.button === 2 || this.space || this.tool === 'hand') { this.drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, ox: this.view.ox, oy: this.view.oy }; this.cursor(); return; }
     if (e.button !== 0) return;
+    if (this.tool.startsWith('shape:')) {
+      const p = this.pieceAt(x, y);
+      if (!p) { this.app.toast?.('Start the shape on a pattern piece.'); return; }
+      this.drag = { mode: 'draw', shape: this.tool.slice(6), piece: p, x0: x, y0: y, x1: x, y1: y };
+      return;
+    }
     const h = this.handleAt(e);
     const sel = this.app.selected();
     if (h && sel) {
@@ -97,14 +144,16 @@ export class PatternEditor {
       this.drag = { mode: h.type, it: sel, cx, cy, w0: sel.w, h0: sel.h, rot0: sel.rot || 0, d0: Math.hypot(x - cx, y - cy), a0: Math.atan2(y - cy, x - cx), moved: false };
       return;
     }
-    const it = this.itemAt(x, y);
+    let it = this.itemAt(x, y);
     if (it) {
-      this.app.select(it.id);
-      const p = this.piece(it.piece);
-      this.drag = { mode: 'move', it, dx: x - (it.x + p.sx), dy: y - (it.y + p.sy), moved: false };
+      if (e.shiftKey) { this.app.toggleSelect(it.id); this.redraw(); return; }
+      if (!this.app.selIds.includes(it.id)) this.app.select(it.id);
+      let group = this.app.selectedItems().filter(i => !i.locked);
+      if (e.altKey) { group = this.app.duplicateItems(group, 0); it = group.find(Boolean); } // Alt-drag = copy
+      this.drag = { mode: 'move', it, group: group.map(g => ({ it: g, x: g.x, y: g.y, px: this.piece(g.piece).sx, py: this.piece(g.piece).sy })), x0: x, y0: y, moved: false };
     } else {
-      this.app.select(null);
-      this.drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, ox: this.view.ox, oy: this.view.oy, soft: true };
+      if (!e.shiftKey) this.app.select(null);
+      this.drag = { mode: 'box', x0: x, y0: y, x1: x, y1: y, add: e.shiftKey, base: [...this.app.selIds] };
     }
     this.redraw();
   }
@@ -119,19 +168,42 @@ export class PatternEditor {
       this.cursor();
       return;
     }
-    if (d.mode === 'pan') { this.view.ox = d.ox + e.clientX - d.sx; this.view.oy = d.oy + e.clientY - d.sy; if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.panned = true; this.cv.style.cursor = 'grabbing'; this.redraw(); return; }
+    if (d.mode === 'pan') { this.view.ox = d.ox + e.clientX - d.sx; this.view.oy = d.oy + e.clientY - d.sy; this.cv.style.cursor = 'grabbing'; this.redraw(); return; }
     const [x, y] = this.toSheet(e);
+    if (d.mode === 'draw') {
+      d.x1 = x; d.y1 = y;
+      if (e.shiftKey && d.shape !== 'line') { const s = Math.max(Math.abs(x - d.x0), Math.abs(y - d.y0)); d.x1 = d.x0 + Math.sign(x - d.x0 || 1) * s; d.y1 = d.y0 + Math.sign(y - d.y0 || 1) * s; }
+      if (e.shiftKey && d.shape === 'line') { const a = Math.round(Math.atan2(y - d.y0, x - d.x0) / (Math.PI / 4)) * Math.PI / 4, L = Math.hypot(x - d.x0, y - d.y0); d.x1 = d.x0 + Math.cos(a) * L; d.y1 = d.y0 + Math.sin(a) * L; }
+      this.redraw(); return;
+    }
+    if (d.mode === 'box') {
+      d.x1 = x; d.y1 = y;
+      const bx0 = Math.min(d.x0, x), bx1 = Math.max(d.x0, x), by0 = Math.min(d.y0, y), by1 = Math.max(d.y0, y);
+      const hits = this.itemsHere().filter(it => {
+        if (it.hidden || it.locked) return false;
+        const p = this.piece(it.piece); if (!p) return false;
+        return itemCorners(it, this.app.assets).some(([cx, cy]) => cx + p.sx >= bx0 && cx + p.sx <= bx1 && cy + p.sy >= by0 && cy + p.sy <= by1);
+      }).map(i => i.id);
+      this.app.setSelection(d.add ? [...new Set([...d.base, ...hits])] : hits, true);
+      this.redraw(); return;
+    }
     const it = d.it, p = this.piece(it.piece);
     d.moved = true;
     this.guides = [];
+    this.readout = null;
     if (d.mode === 'move') {
-      let nx = x - d.dx - p.sx, ny = y - d.dy - p.sy;
-      if (!e.altKey) { // snap to the piece's centre lines
-        const tol = 8 / this.view.s, pcx = p.w / 2, pcy = p.h / 2;
-        if (Math.abs(nx - pcx) < tol) { nx = pcx; this.guides.push(['v', p.sx + pcx, p]); }
-        if (Math.abs(ny - pcy) < tol) { ny = pcy; this.guides.push(['h', p.sy + pcy, p]); }
+      let dx = x - d.x0, dy = y - d.y0;
+      const lead = d.group[0];
+      if (!(e.ctrlKey || e.metaKey) && lead) { // snap the lead item to its piece's centre lines
+        const lp = this.piece(lead.it.piece), tol = 8 / this.view.s, pcx = lp.w / 2, pcy = lp.h / 2;
+        const nx = lead.x + dx + lead.px - lp.sx, ny = lead.y + dy + lead.py - lp.sy;
+        if (Math.abs(nx - pcx) < tol) { dx += pcx - nx; this.guides.push(['v', lp.sx + pcx, lp]); }
+        if (Math.abs(ny - pcy) < tol) { dy += pcy - ny; this.guides.push(['h', lp.sy + pcy, lp]); }
       }
-      it.x = nx; it.y = ny;
+      for (const gi of d.group) { const gp = this.piece(gi.it.piece); gi.it.x = gi.x + dx + gi.px - gp.sx; gi.it.y = gi.y + dy + gi.py - gp.sy; }
+      // position readout from the piece's top-left corner
+      const lp = this.piece(it.piece), cs = itemCorners(it, this.app.assets);
+      this.readout = { it, text: `${this.app.fmtLen(Math.min(...cs.map(c => c[0])))} × ${this.app.fmtLen(Math.min(...cs.map(c => c[1])))} ${this.app.unit()} from corner` };
     } else if (d.mode === 'scale') {
       const k = Math.hypot(x - d.cx, y - d.cy) / (d.d0 || 1);
       it.w = clamp(d.w0 * k, 0.3, 400);
@@ -149,17 +221,33 @@ export class PatternEditor {
     this.app.itemsChanged(true);
   }
   up(e) {
-    const d = this.drag; this.drag = null; this.guides = [];
+    const d = this.drag; this.drag = null; this.guides = []; this.readout = null;
     if (!d) return;
-    if (d.mode === 'pan') { if (d.soft && !d.panned) this.app.select(null); this.cursor(); this.redraw(); return; }
-    if (d.moved && d.mode === 'move') {
-      // re-home the item onto whichever piece its centre landed on
-      const it = d.it, p = this.piece(it.piece);
-      const sx = it.x + p.sx, sy = it.y + p.sy;
-      const np = this.pieceAt(sx, sy);
-      if (np && np.id !== p.id) { it.piece = np.id; it.x = sx - np.sx; it.y = sy - np.sy; }
+    if (d.mode === 'pan') { this.cursor(); this.redraw(); return; }
+    if (d.mode === 'box') { this.app.setSelection(this.app.selIds); this.redraw(); return; }
+    if (d.mode === 'draw') {
+      const p = d.piece, mx = this.mirrorOf(p);
+      let w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
+      if (d.shape === 'line' || d.shape === 'dashed') {
+        const L = Math.hypot(d.x1 - d.x0, d.y1 - d.y0);
+        if (L > 0.4) this.app.addShapeAt(d.shape, p.id, (d.x0 + d.x1) / 2 - p.sx, (d.y0 + d.y1) / 2 - p.sy, L, 0.4, deg(Math.atan2(d.y1 - d.y0, d.x1 - d.x0)));
+      } else if (w > 0.4 && h > 0.4) {
+        this.app.addShapeAt(d.shape, p.id, (d.x0 + d.x1) / 2 - p.sx, (d.y0 + d.y1) / 2 - p.sy, w, h, 0);
+      }
+      if (mx) { /* positions are already in the mirrored (inside) display space */ }
+      this.app.setTool('select');
+      this.redraw(); return;
     }
-    if (d.moved) { this.app.itemsChanged(false); this.app.commit(); }
+    if (d.moved && d.mode === 'move') {
+      // re-home each item onto whichever piece its centre landed on
+      for (const gi of d.group) {
+        const it = gi.it, p = this.piece(it.piece);
+        const sx = it.x + p.sx, sy = it.y + p.sy;
+        const np = this.pieceAt(sx, sy);
+        if (np && np.id !== p.id) { it.piece = np.id; it.x = sx - np.sx; it.y = sy - np.sy; }
+      }
+    }
+    if (d.moved || d.copied) { this.app.itemsChanged(false); this.app.commit(); }
     this.redraw();
   }
   wheel(e) {
@@ -172,6 +260,7 @@ export class PatternEditor {
     const [x, y] = this.toSheet(e);
     const it = this.itemAt(x, y);
     if (it?.type === 'text') this.app.focusText();
+    else if (!it) this.fit();
   }
 
   /* ---------- drawing ---------- */
@@ -193,48 +282,52 @@ export class PatternEditor {
     }
     c.save();
     c.translate(v.ox, v.oy); c.scale(v.s, v.s);
-    const base = this.app.baseCanvas;
+    const base = this.inside ? this.app.insideBase || this.app.baseCanvas : this.app.baseCanvas;
     const marks = this.app.doc.view?.marks !== false;
-    const sel = this.app.selected();
-    for (const p of g.pieces) {
+    const selIds = this.app.selIds;
+    const face = this.face();
+    const pieces = this.visiblePieces();
+    for (const p of pieces) {
+      const mx = this.mirrorOf(p);
       c.save(); c.translate(p.sx, p.sy);
+      const lp = { ...p, poly: this.localPoly(p), holes: mx ? (p.holes || []).map(h => h.map(([x, y]) => [p.w - x, y])) : p.holes };
       c.save(); c.shadowColor = 'rgba(16,24,40,.12)'; c.shadowBlur = 10; c.shadowOffsetY = 2;
-      piecePath(c, p); c.fillStyle = this.app.doc.fabric.color; c.fill(); c.restore();
-      c.save(); piecePath(c, p); c.clip();
-      if (base) c.drawImage(base, -p.sx, -p.sy, g.sheet.w, g.sheet.h);
-      for (const it of this.app.doc.items) if (it.piece === p.id) drawItem(c, it, this.app.assets, () => this.app.assetReady(), v.s * this.dpr);
+      piecePath(c, lp); c.fillStyle = this.app.doc.fabric.color; c.fill(); c.restore();
+      c.save(); piecePath(c, lp); c.clip();
+      if (base) { c.save(); if (mx) { c.translate(p.w, 0); c.scale(-1, 1); } c.drawImage(base, -p.sx, -p.sy, g.sheet.w, g.sheet.h); c.restore(); }
+      if (p.id === 'label') { c.fillStyle = this.app.labelColour(); c.fillRect(0, 0, p.w, p.h); }
+      if (this.inside && !p.insideOnly) { c.fillStyle = 'rgba(0,0,0,.06)'; c.fillRect(0, 0, p.w, p.h); }
+      const wrap = !this.inside && this.app.wrapCanvas;
+      for (const it of this.app.doc.items) if (it.piece === p.id && (it.face || 'out') === face && !(wrap && it.wrap)) drawItem(c, it, this.app.assets, () => this.app.assetReady(), v.s * this.dpr);
+      if (wrap) c.drawImage(wrap, -p.sx, -p.sy, g.sheet.w, g.sheet.h); // prints wrapped over seams, as baked from 3D
       c.restore();
       c.restore();
     }
-    // ghost of the selected item outside its piece, so nothing "disappears" while placing
-    if (sel && !sel.hidden) {
-      const p = this.piece(sel.piece);
-      if (p) {
-        c.save(); c.translate(p.sx, p.sy); c.globalAlpha = 0.28;
-        c.beginPath(); c.rect(-1e4, -1e4, 2e4, 2e4); piecePath(c, p); c.clip('evenodd');
-        drawItem(c, sel, this.app.assets, null, v.s * this.dpr); c.restore();
-      }
+    // ghosts of selected items outside their piece, so nothing "disappears" while placing
+    for (const sel of this.app.selectedItems()) {
+      if (sel.hidden || (sel.face || 'out') !== face) continue;
+      const p = this.piece(sel.piece); if (!p) continue;
+      c.save(); c.translate(p.sx, p.sy); c.globalAlpha = 0.28;
+      c.beginPath(); c.rect(-1e4, -1e4, 2e4, 2e4); piecePath(c, { poly: this.localPoly(p) }); c.clip('evenodd');
+      drawItem(c, sel, this.app.assets, null, v.s * this.dpr); c.restore();
     }
     // outlines & markings
-    for (const p of g.pieces) {
+    for (const p of pieces) {
+      const lp = { poly: this.localPoly(p), holes: this.mirrorOf(p) ? (p.holes || []).map(h => h.map(([x, y]) => [p.w - x, y])) : p.holes };
       c.save(); c.translate(p.sx, p.sy);
-      piecePath(c, p);
+      piecePath(c, lp);
       c.lineWidth = 1.3 / v.s; c.strokeStyle = col('--piece-line'); c.stroke();
       if (marks) {
         c.setLineDash([6 / v.s, 4 / v.s]); c.lineWidth = 1 / v.s; c.strokeStyle = col('--faint');
-        for (const f of p.folds || []) { c.beginPath(); c.moveTo(...f[0]); c.lineTo(...f[1]); c.stroke(); }
+        for (const f of p.folds || []) { c.beginPath(); const a = this.mirrorOf(p) ? f.map(([x, y]) => [p.w - x, y]) : f; c.moveTo(...a[0]); c.lineTo(...a[1]); c.stroke(); }
         c.setLineDash([]);
-        if (p.grain && p.h > 20) { // grainline arrow
-          const gx = p.w * 0.16, y0 = p.h * 0.3, y1 = p.h * 0.7, a = 1.2;
-          c.beginPath(); c.moveTo(gx, y0); c.lineTo(gx, y1); c.moveTo(gx - a * 0.6, y0 + a); c.lineTo(gx, y0); c.lineTo(gx + a * 0.6, y0 + a); c.moveTo(gx - a * 0.6, y1 - a); c.lineTo(gx, y1); c.lineTo(gx + a * 0.6, y1 - a);
-          c.strokeStyle = col('--faint'); c.lineWidth = 1 / v.s; c.stroke();
-        }
       }
       // name + size under the piece, like a printed cutting sheet
       const fs = clamp(12 / v.s, 0.7, 3.4);
       c.textAlign = 'center'; c.fillStyle = col('--piece-ink');
       c.font = `500 ${fs}px Inter, system-ui, sans-serif`; c.globalAlpha = 0.9;
-      c.fillText(p.label, p.w / 2, p.h + fs * 1.45);
+      const name = this.inside && !p.insideOnly ? `${p.label} · inside` : p.label;
+      c.fillText(name, p.w / 2, p.h + fs * 1.45);
       c.font = `400 ${fs * 0.85}px Inter, system-ui, sans-serif`; c.globalAlpha = 0.55;
       c.fillText(`${this.app.fmtLen(p.w)} × ${this.app.fmtLen(p.h)} ${this.app.unit()} · cut 1`, p.w / 2, p.h + fs * 2.7);
       c.globalAlpha = 1;
@@ -246,29 +339,75 @@ export class PatternEditor {
       if (t === 'v') { c.moveTo(val, p.sy - 2); c.lineTo(val, p.sy + p.h + 2); } else { c.moveTo(p.sx - 2, val); c.lineTo(p.sx + p.w + 2, val); }
       c.stroke(); c.setLineDash([]);
     }
+    // shape being drawn
+    const d = this.drag;
+    if (d?.mode === 'draw') {
+      c.strokeStyle = col('--accent'); c.lineWidth = 1.5 / v.s; c.setLineDash([5 / v.s, 3 / v.s]);
+      if (d.shape === 'line' || d.shape === 'dashed') { c.beginPath(); c.moveTo(d.x0, d.y0); c.lineTo(d.x1, d.y1); c.stroke(); }
+      else c.strokeRect(Math.min(d.x0, d.x1), Math.min(d.y0, d.y1), Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0));
+      c.setLineDash([]);
+    }
     c.restore();
-    // selection
-    if (sel && !sel.hidden) {
+    // selection box (marquee)
+    if (d?.mode === 'box') {
+      const [ax, ay] = this.toScreen(d.x0, d.y0), [bx, by] = this.toScreen(d.x1, d.y1);
+      c.fillStyle = col('--accent-soft'); c.globalAlpha = 0.35; c.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)); c.globalAlpha = 1;
+      c.strokeStyle = col('--accent'); c.lineWidth = 1; c.strokeRect(Math.min(ax, bx) + 0.5, Math.min(ay, by) + 0.5, Math.abs(bx - ax), Math.abs(by - ay));
+    }
+    // selection frames
+    const single = selIds.length === 1;
+    for (const sel of this.app.selectedItems()) {
+      if (sel.hidden || (sel.face || 'out') !== face) continue;
       const hd = this.handlesFor(sel);
-      if (hd.corners) {
-        c.beginPath(); hd.corners.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p)); c.closePath();
-        c.strokeStyle = col('--accent'); c.lineWidth = 1.5; c.stroke();
-        if (!sel.locked) for (const h of hd.hs) {
-          if (h.type === 'rot') { c.beginPath(); c.moveTo(...h.from); c.lineTo(...h.pt); c.stroke(); c.beginPath(); c.arc(h.pt[0], h.pt[1], HANDLE - 1, 0, Math.PI * 2); c.fillStyle = col('--accent'); c.fill(); continue; }
-          c.beginPath(); c.rect(h.pt[0] - HANDLE / 2 - 1, h.pt[1] - HANDLE / 2 - 1, HANDLE + 2, HANDLE + 2);
-          c.fillStyle = '#fff'; c.fill(); c.strokeStyle = col('--accent'); c.stroke();
-        }
-        // size readout
+      if (!hd.corners) continue;
+      c.beginPath(); hd.corners.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p)); c.closePath();
+      c.strokeStyle = col('--accent'); c.lineWidth = 1.5; c.stroke();
+      if (single && !sel.locked) for (const h of hd.hs) {
+        if (h.type === 'rot') { c.beginPath(); c.moveTo(...h.from); c.lineTo(...h.pt); c.stroke(); c.beginPath(); c.arc(h.pt[0], h.pt[1], HANDLE - 1, 0, Math.PI * 2); c.fillStyle = col('--accent'); c.fill(); continue; }
+        c.beginPath(); c.rect(h.pt[0] - HANDLE / 2 - 1, h.pt[1] - HANDLE / 2 - 1, HANDLE + 2, HANDLE + 2);
+        c.fillStyle = '#fff'; c.fill(); c.strokeStyle = col('--accent'); c.stroke();
+      }
+      if (single) {
         const u = this.app.unit(), hcm = itemHeight(sel, this.app.assets);
-        const txt = `${this.app.fmtLen(sel.w)} × ${this.app.fmtLen(hcm)} ${u}`;
-        const bx = Math.max(...hd.corners.map(p => p[0])), by = Math.max(...hd.corners.map(p => p[1]));
+        const txt = this.readout?.it === sel ? this.readout.text : `${this.app.fmtLen(sel.w)} × ${this.app.fmtLen(hcm)} ${u}`;
+        const bx = (Math.min(...hd.corners.map(p => p[0])) + Math.max(...hd.corners.map(p => p[0]))) / 2, by = Math.max(...hd.corners.map(p => p[1]));
         c.font = '600 11px Inter, system-ui, sans-serif'; const tw = c.measureText(txt).width + 12;
-        c.fillStyle = col('--accent'); c.beginPath(); c.roundRect(bx - tw, by + 8, tw, 20, 5); c.fill();
-        c.fillStyle = '#fff'; c.textAlign = 'left'; c.fillText(txt, bx - tw + 6, by + 22);
+        c.fillStyle = col('--accent'); c.beginPath(); c.roundRect(bx - tw / 2, by + 8, tw, 20, 5); c.fill();
+        c.fillStyle = '#fff'; c.textAlign = 'center'; c.fillText(txt, bx, by + 22);
       }
     }
-    // scale readout
-    const sc = this.app.$('#patScale'); if (sc) sc.textContent = `1 cm = ${v.s.toFixed(1)} px · ${Math.round(v.s / 3.78 * 100)}%`;
+    this.drawRulers(c, col);
+    this.app.onZoom?.();
+  }
+  drawRulers(c, col) {
+    const v = this.view, u = this.app.unit();
+    const unitCm = u === 'in' ? 2.54 : u === 'mm' ? 0.1 : 1;
+    // pick a major step (in units) that gives ~70 px between labels
+    const pxPerUnit = v.s * unitCm;
+    const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+    const major = steps.find(s => s * pxPerUnit >= 60) || 1000;
+    const minor = major / (major % 5 === 0 ? 5 : 2);
+    c.fillStyle = col('--panel'); c.fillRect(0, 0, this.w, RULER); c.fillRect(0, 0, RULER, this.h);
+    c.strokeStyle = col('--line-strong'); c.lineWidth = 1;
+    c.beginPath(); c.moveTo(0, RULER - 0.5); c.lineTo(this.w, RULER - 0.5); c.moveTo(RULER - 0.5, 0); c.lineTo(RULER - 0.5, this.h); c.stroke();
+    c.fillStyle = col('--muted'); c.font = '9.5px Inter, system-ui, sans-serif';
+    c.strokeStyle = col('--faint');
+    const x0 = Math.floor(-v.ox / pxPerUnit / minor) * minor;
+    for (let t = x0; t * pxPerUnit + v.ox < this.w; t += minor) {
+      const X = Math.round(t * pxPerUnit + v.ox) + 0.5; if (X < RULER) continue;
+      const isMajor = Math.abs(t / major - Math.round(t / major)) < 1e-6;
+      c.beginPath(); c.moveTo(X, RULER); c.lineTo(X, RULER - (isMajor ? 9 : 4)); c.stroke();
+      if (isMajor) { c.textAlign = 'left'; c.fillText(String(Math.round(t * 100) / 100), X + 2, 10); }
+    }
+    const y0 = Math.floor(-v.oy / pxPerUnit / minor) * minor;
+    for (let t = y0; t * pxPerUnit + v.oy < this.h; t += minor) {
+      const Y = Math.round(t * pxPerUnit + v.oy) + 0.5; if (Y < RULER) continue;
+      const isMajor = Math.abs(t / major - Math.round(t / major)) < 1e-6;
+      c.beginPath(); c.moveTo(RULER, Y); c.lineTo(RULER - (isMajor ? 9 : 4), Y); c.stroke();
+      if (isMajor) { c.save(); c.translate(10, Y + 2); c.rotate(-Math.PI / 2); c.textAlign = 'right'; c.fillText(String(Math.round(t * 100) / 100), 0, 0); c.restore(); }
+    }
+    c.fillStyle = col('--panel'); c.fillRect(0, 0, RULER, RULER);
+    c.fillStyle = col('--muted'); c.textAlign = 'center'; c.fillText(u, RULER / 2, 14);
   }
 }
 

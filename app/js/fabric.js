@@ -2,28 +2,33 @@
 import { fbm, vnoise, mulberry, makeCanvas, clamp, smooth } from './util.js';
 
 export const FABRICS = [
-  { id: 'jersey', name: 'Cotton jersey', rough: 0.92, sheen: 0.15, tileCm: 1.1 },
-  { id: 'smooth', name: 'Cotton-elastane (smooth)', rough: 0.78, sheen: 0.25, tileCm: 0.8 },
-  { id: 'heavy', name: 'Heavyweight cotton', rough: 0.95, sheen: 0.1, tileCm: 1.6 },
+  { id: 'jersey', name: 'Cotton', rough: 0.92, sheen: 0.15, tileCm: 1.1 },
+  { id: 'smooth', name: 'Cotton blend (smooth)', rough: 0.78, sheen: 0.25, tileCm: 0.8 },
   { id: 'fleece', name: 'Fleece / French terry', rough: 1.0, sheen: 0.55, tileCm: 1.4 },
+  { id: 'interlock', name: 'Interlock', rough: 0.85, sheen: 0.2, tileCm: 0.9 },
   { id: 'pique', name: 'Piqué', rough: 0.9, sheen: 0.15, tileCm: 1.3 },
   { id: 'rib', name: 'Rib knit', rough: 0.9, sheen: 0.15, tileCm: 1.2 },
+  { id: 'poly', name: 'Sport knit (polyester)', rough: 0.5, sheen: 0.35, tileCm: 0.7 },
   { id: 'waffle', name: 'Waffle', rough: 0.95, sheen: 0.1, tileCm: 2.2 },
-  { id: 'interlock', name: 'Interlock', rough: 0.85, sheen: 0.2, tileCm: 0.9 },
-  { id: 'mesh', name: 'Sport mesh', rough: 0.55, sheen: 0.3, tileCm: 1.4 },
-  { id: 'poly', name: 'Sport poly (dri-fit)', rough: 0.5, sheen: 0.35, tileCm: 0.7 },
+  { id: 'mesh', name: 'Athletic mesh', rough: 0.55, sheen: 0.3, tileCm: 1.4 },
+  { id: 'heavy', name: 'Heavyweight cotton', rough: 0.95, sheen: 0.1, tileCm: 1.6 },
   { id: 'canvas', name: 'Canvas', rough: 0.95, sheen: 0.05, tileCm: 1.2 },
   { id: 'denim', name: 'Denim twill', rough: 0.9, sheen: 0.08, tileCm: 1.0 },
 ];
 
 export const WASHES = [
   { id: 'none', name: 'None' },
-  { id: 'stone', name: 'Stone wash' },
   { id: 'acid', name: 'Acid wash' },
+  { id: 'bleachwash', name: 'Bleach wash' },
+  { id: 'caustic', name: 'Caustic wash' },
+  { id: 'enzyme', name: 'Enzyme stone wash' },
+  { id: 'ice', name: 'Ice wash' },
+  { id: 'laser', name: 'Laser wash' },
   { id: 'mineral', name: 'Mineral wash' },
-  { id: 'vintage', name: 'Vintage fade' },
-  { id: 'enzyme', name: 'Enzyme wash' },
+  { id: 'permanganate', name: 'Permanganate spray' },
   { id: 'snow', name: 'Snow wash' },
+  { id: 'stone', name: 'Stone wash' },
+  { id: 'vintage', name: 'Vintage' },
   { id: 'bleach', name: 'Bleach splatter' },
   { id: 'tiedye', name: 'Tie-dye spiral', tint: true },
   { id: 'crumple', name: 'Crumple tie-dye', tint: true },
@@ -148,6 +153,11 @@ export function buildOverlays(garment, fabric) {
         case 'acid': { const v = Math.abs(fbm(x * 0.045, y * 0.045, 5, seed)); const w2 = Math.abs(fbm(x * 0.09 + 3, y * 0.09, 4, seed + 2)); L = Math.pow(1 - Math.min(1, v * 7), 2.4) * 0.95 + Math.pow(1 - Math.min(1, w2 * 9), 3) * 0.6; D = smooth(clamp(fbm(x * 0.03, y * 0.03, 3, seed + 8) * 2, 0, 1)) * 0.25; break; }
         case 'mineral': { const n = fbm(x * 0.028, y * 0.028, 5, seed); L = smooth(clamp((n + 0.05) * 2.1, 0, 1)) * 0.62; D = smooth(clamp(-n * 2.4 - 0.2, 0, 1)) * 0.28; break; }
         case 'vintage': { L = 0.24 + fbm(x * 0.05, y * 0.05, 3, seed) * 0.12 + Math.pow(Math.abs(fbm(x * 0.02, y * 0.11, 3, seed + 5)), 0.5) * 0.12; break; }
+        case 'bleachwash': { L = 0.18 + smooth(clamp(fbm(x * 0.025, y * 0.025, 4, seed) * 1.6 + 0.45, 0, 1)) * 0.42; break; }
+        case 'caustic': { const n = fbm(x * 0.05, y * 0.05, 5, seed); L = smooth(clamp(n * 3.2 + 0.15, 0, 1)) * 0.82 + (vnoise(x * 2.2, y * 2.2, seed + 6) > 0.72 ? 0.25 : 0); D = smooth(clamp(-n * 3 - 0.4, 0, 1)) * 0.3; break; }
+        case 'ice': { const n = fbm(x * 0.04, y * 0.04, 4, seed), e = fbm(x * 0.3, y * 0.3, 2, seed + 3) * 0.08; L = (n + e > 0.04 ? 0.62 : 0) + Math.max(0, vnoise(x * 3, y * 3, seed + 9) - 0.55) * 0.9; break; }
+        case 'laser': { const band = Math.sin(y * 17) > 0.55 ? 1 : 0, mask = smooth(clamp(fbm(x * 0.03, y * 0.03, 3, seed) * 2 + 0.5, 0, 1)); L = band * mask * 0.55 + mask * 0.12; break; }
+        case 'permanganate': { const dens = smooth(clamp(fbm(x * 0.035, y * 0.035, 3, seed) * 2.2 + 0.35, 0, 1)); L = rnd() < dens * 0.22 ? 0.85 : dens * 0.18; break; }
         case 'enzyme': { L = clamp(fbm(x * 0.12, y * 0.12, 4, seed) * 0.5 + 0.18, 0, 1) * 0.4; break; }
         case 'snow': { const n = vnoise(x * 1.1, y * 1.1, seed) * 0.6 + vnoise(x * 2.7, y * 2.7, seed + 4) * 0.4; L = smooth(clamp((n - 0.35) * 3, 0, 1)) * 0.85 + fbm(x * 0.05, y * 0.05, 2, seed) * 0.1; break; }
         case 'bleach': { for (const [dx, dy, r] of drops) { const dd = Math.hypot(x - dx, y - dy); if (dd < r * 1.5) { const ed = r * (1 + fbm(x * 0.8, y * 0.8, 2, seed) * 0.35); if (dd < ed) L = Math.max(L, 0.92 - (dd / ed) * 0.25); else L = Math.max(L, (1 - (dd - ed) / (r * 0.5)) * 0.4); } } break; }

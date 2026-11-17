@@ -4,31 +4,42 @@ import { makeCanvas, affMul, affInv, affApply, loadImage, rad, hexToRgb, fbm, mu
 import { tintedMask } from './fabric.js';
 
 export const FONTS = [
-  { family: 'Inter', weights: [400, 600, 800] },
+  { family: 'Inter', weights: [100, 200, 300, 400, 500, 600, 700, 800, 900] },
+  { family: 'Poppins', weights: [100, 300, 400, 600, 800, 900] },
+  { family: 'Montserrat', weights: [100, 300, 400, 500, 700, 900] },
+  { family: 'Raleway', weights: [100, 300, 400, 700, 900] },
+  { family: 'Space Grotesk', weights: [300, 400, 500, 700] },
+  { family: 'Oswald', weights: [300, 400, 500, 600, 700] },
+  { family: 'Teko', weights: [300, 500, 700] },
   { family: 'Bebas Neue', weights: [400] },
   { family: 'Anton', weights: [400] },
-  { family: 'Oswald', weights: [400, 700] },
   { family: 'Archivo Black', weights: [400] },
-  { family: 'Montserrat', weights: [400, 700, 900] },
-  { family: 'Space Grotesk', weights: [400, 700] },
-  { family: 'Playfair Display', weights: [400, 700, 900] },
-  { family: 'Abril Fatface', weights: [400] },
-  { family: 'Roboto Slab', weights: [400, 800] },
-  { family: 'Pacifico', weights: [400] },
-  { family: 'Lobster', weights: [400] },
-  { family: 'Permanent Marker', weights: [400] },
-  { family: 'Caveat', weights: [400, 700] },
+  { family: 'Russo One', weights: [400] },
+  { family: 'Righteous', weights: [400] },
   { family: 'Bungee', weights: [400] },
+  { family: 'Black Ops One', weights: [400] },
+  { family: 'Bangers', weights: [400] },
   { family: 'Rubik Mono One', weights: [400] },
   { family: 'Press Start 2P', weights: [400] },
+  { family: 'Playfair Display', weights: [400, 700, 900] },
+  { family: 'Abril Fatface', weights: [400] },
+  { family: 'Roboto Slab', weights: [100, 300, 400, 700, 900] },
   { family: 'UnifrakturMaguntia', weights: [400] },
+  { family: 'Permanent Marker', weights: [400] },
+  { family: 'Rock Salt', weights: [400] },
+  { family: 'Caveat', weights: [400, 700] },
+  { family: 'Dancing Script', weights: [400, 700] },
+  { family: 'Pacifico', weights: [400] },
+  { family: 'Lobster', weights: [400] },
 ];
 
 export const SHAPES = [
-  { id: 'rect', name: 'Rectangle' }, { id: 'round', name: 'Rounded' }, { id: 'circle', name: 'Ellipse' },
-  { id: 'triangle', name: 'Triangle' }, { id: 'star', name: 'Star' }, { id: 'heart', name: 'Heart' },
-  { id: 'badge', name: 'Badge' }, { id: 'line', name: 'Line' },
+  { id: 'rect', name: 'Rectangle' }, { id: 'square', name: 'Square' }, { id: 'circle', name: 'Circle' },
+  { id: 'triangle', name: 'Triangle' }, { id: 'star', name: 'Star' }, { id: 'diamond', name: 'Diamond' },
+  { id: 'line', name: 'Line' }, { id: 'dashed', name: 'Dashed line' },
+  { id: 'round', name: 'Rounded rectangle' }, { id: 'heart', name: 'Heart' }, { id: 'badge', name: 'Badge' },
 ];
+export const isLine = (s) => s === 'line' || s === 'dashed';
 
 /* ---------- assets (decoded images) ---------- */
 const imgCache = new Map();
@@ -41,6 +52,95 @@ export function getImage(assets, id, onReady) {
   imgCache.set(id, entry);
   loadImage(src).then(img => { entry.img = img; onReady && onReady(); }).catch(() => {});
   return null;
+}
+
+/* ---------- image tools: crop, invert, hue, saturation, fill with colour, halftone ----------
+   Non-destructive: the original upload is kept, the adjusted copy is cached per item. */
+const procCache = new Map();
+export const hasAdjust = (it) => !!(it.crop || it.invert || it.hue || (it.sat ?? 1) !== 1 || it.fill || it.halftone);
+export const colourAdjusted = (it) => !!(it.invert || it.hue || (it.sat ?? 1) !== 1 || it.fill);
+function hueSatMatrix(hueDeg, s) {
+  const a = rad(hueDeg || 0), c = Math.cos(a), n = Math.sin(a);
+  const H = [
+    0.213 + c * 0.787 - n * 0.213, 0.715 - c * 0.715 - n * 0.715, 0.072 - c * 0.072 + n * 0.928,
+    0.213 - c * 0.213 + n * 0.143, 0.715 + c * 0.285 + n * 0.140, 0.072 - c * 0.072 - n * 0.283,
+    0.213 - c * 0.213 - n * 0.787, 0.715 - c * 0.715 + n * 0.715, 0.072 + c * 0.928 + n * 0.072,
+  ];
+  const S = [
+    0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s,
+    0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s,
+    0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s,
+  ];
+  const M = new Array(9);
+  for (let r = 0; r < 3; r++) for (let k = 0; k < 3; k++) M[r * 3 + k] = S[r * 3] * H[k] + S[r * 3 + 1] * H[3 + k] + S[r * 3 + 2] * H[6 + k];
+  return M;
+}
+export function imageSource(it, assets, onReady, hi = false) {
+  const img = getImage(assets, it.asset, onReady);
+  if (!img || !hasAdjust(it)) return img;
+  const key = JSON.stringify([it.asset, it.crop, it.invert, it.hue, it.sat, it.fill && it.fillColor, it.halftone && [it.halftoneSize, Math.round(it.w)], hi]);
+  const ck = it.id + (hi ? ':hi' : '');
+  const hit = procCache.get(ck);
+  if (hit && hit.key === key) return hit.cv;
+  const nw = img.naturalWidth || 1000, nh = img.naturalHeight || 1000;
+  const cr = it.crop || { x: 0, y: 0, w: 1, h: 1 };
+  const sw = nw * cr.w, sh = nh * cr.h;
+  const k = Math.min(1, (hi ? 8000 : 1600) / Math.max(sw, sh));
+  const cv = makeCanvas(sw * k, sh * k), c = cv.getContext('2d', { willReadFrequently: true });
+  c.drawImage(img, nw * cr.x, nh * cr.y, sw, sh, 0, 0, cv.width, cv.height);
+  if (colourAdjusted(it)) {
+    const im = c.getImageData(0, 0, cv.width, cv.height), d = im.data;
+    const M = (it.hue || (it.sat ?? 1) !== 1) ? hueSatMatrix(it.hue, it.sat ?? 1) : null;
+    const F = it.fill ? hexToRgb(it.fillColor || '#ffffff') : null;
+    for (let i = 0; i < d.length; i += 4) {
+      if (!d[i + 3]) continue;
+      let r = d[i], g = d[i + 1], b = d[i + 2];
+      if (F) { r = F[0]; g = F[1]; b = F[2]; }
+      else {
+        if (M) { const R = M[0] * r + M[1] * g + M[2] * b, G = M[3] * r + M[4] * g + M[5] * b, B = M[6] * r + M[7] * g + M[8] * b; r = R; g = G; b = B; }
+        if (it.invert) { r = 255 - r; g = 255 - g; b = 255 - b; }
+      }
+      d[i] = r; d[i + 1] = g; d[i + 2] = b;
+    }
+    c.putImageData(im, 0, 0);
+  }
+  if (it.halftone) halftone(cv, it, cv.width / Math.max(0.1, it.w));
+  procCache.set(ck, { key, cv });
+  return cv;
+}
+// colour halftone: the artwork becomes a grid of round dots (rotated 22.5°), sized by its coverage
+function halftone(cv, it, pxPerCm) {
+  const W = cv.width, H = cv.height;
+  const src = cv.getContext('2d').getImageData(0, 0, W, H).data;
+  const cell = Math.max(3, (it.halftoneSize || 2) / 10 * pxPerCm);
+  const out = cv.getContext('2d');
+  out.clearRect(0, 0, W, H);
+  const ang = rad(22.5), ca = Math.cos(ang), sa = Math.sin(ang);
+  const R = Math.hypot(W, H);
+  for (let gy = -R; gy < R; gy += cell) for (let gx = -R; gx < R; gx += cell) {
+    const x = W / 2 + gx * ca - gy * sa, y = H / 2 + gx * sa + gy * ca;
+    if (x < -cell || y < -cell || x > W + cell || y > H + cell) continue;
+    let r = 0, g = 0, b = 0, a = 0, n = 0;
+    const s = Math.max(1, Math.floor(cell / 3));
+    for (let oy = -cell / 2; oy < cell / 2; oy += s) for (let ox = -cell / 2; ox < cell / 2; ox += s) {
+      const px = Math.round(x + ox), py = Math.round(y + oy);
+      n++;
+      if (px < 0 || py < 0 || px >= W || py >= H) continue;
+      const i = (py * W + px) * 4, al = src[i + 3] / 255;
+      r += src[i] * al; g += src[i + 1] * al; b += src[i + 2] * al; a += al;
+    }
+    if (!a) continue;
+    const cover = a / n;
+    const rad_ = Math.sqrt(cover) * cell * 0.62;
+    if (rad_ < 0.35) continue;
+    out.fillStyle = `rgb(${r / a},${g / a},${b / a})`;
+    out.beginPath(); out.arc(x, y, rad_, 0, Math.PI * 2); out.fill();
+  }
+}
+// aspect ratio of an image item after cropping
+export function imageAspect(it) {
+  const [pw, ph] = it.px || [1, 1], cr = it.crop || { w: 1, h: 1 };
+  return (pw * cr.w) / (ph * cr.h || 1);
 }
 
 /* ---------- text rasteriser (cached) ---------- */
@@ -127,7 +227,8 @@ function shapePath(c, s, w, h) {
     case 'star': for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 0.42 : 1; c.lineTo(Math.cos(a) * w / 2 * r, Math.sin(a) * h / 2 * r + h * 0.05); } c.closePath(); break;
     case 'heart': c.moveTo(0, h * 0.35); c.bezierCurveTo(-w * 0.62, -h * 0.05, -w * 0.38, -h * 0.62, 0, -h * 0.25); c.bezierCurveTo(w * 0.38, -h * 0.62, w * 0.62, -h * 0.05, 0, h * 0.35); c.closePath(); break;
     case 'badge': for (let i = 0; i < 24; i++) { const a = i * Math.PI / 12, r = i % 2 ? 0.88 : 1; c.lineTo(Math.cos(a) * w / 2 * r, Math.sin(a) * h / 2 * r); } c.closePath(); break;
-    case 'line': c.moveTo(x, 0); c.lineTo(w / 2, 0); break;
+    case 'diamond': c.moveTo(0, y); c.lineTo(w / 2, 0); c.lineTo(0, h / 2); c.lineTo(x, 0); c.closePath(); break;
+    case 'line': case 'dashed': c.moveTo(x, 0); c.lineTo(w / 2, 0); break;
     default: c.rect(x, y, w, h);
   }
 }
@@ -166,7 +267,7 @@ export function drawItem(c, it, assets, onReady, pxPerCm = 10) {
   if (it.blend === 'multiply') c.globalCompositeOperation = 'multiply';
   const drawCore = (cx) => {
     if (it.type === 'image') {
-      const img = getImage(assets, it.asset, onReady);
+      const img = imageSource(it, assets, onReady, pxPerCm > 60);
       if (img) cx.drawImage(img, -it.w / 2, -h / 2, it.w, h);
     } else if (it.type === 'text') {
       const cv = textRaster(it);
@@ -174,9 +275,9 @@ export function drawItem(c, it, assets, onReady, pxPerCm = 10) {
     } else if (it.type === 'shape') {
       shapePath(cx, it.shape, it.w, it.h);
       const lw = (it.thick || 3) / 10;
-      if (it.shape === 'line' || it.outline) {
+      if (isLine(it.shape) || it.outline) {
         cx.lineWidth = lw; cx.strokeStyle = it.color; cx.lineJoin = 'round'; cx.lineCap = 'round';
-        if (it.dashed) cx.setLineDash([lw * 3, lw * 2.2]);
+        if (it.dashed || it.shape === 'dashed') cx.setLineDash([lw * 3, lw * 2.2]);
         cx.stroke();
       } else { cx.fillStyle = it.color; cx.fill(); }
     }
@@ -200,6 +301,12 @@ export function drawItem(c, it, assets, onReady, pxPerCm = 10) {
   c.restore();
 }
 
+/* ---------- fabric gradient: up to 5 stops, position 0 = top ---------- */
+export function gradientStops(fabric) {
+  const st = (fabric.stops?.length >= 2 ? fabric.stops : [{ p: 0, c: fabric.color || '#ffffff' }, { p: 1, c: fabric.color2 || '#000000' }]);
+  return [...st].map(s => ({ p: Math.max(0, Math.min(1, +s.p || 0)), c: s.c })).sort((a, b) => a.p - b.p);
+}
+
 /* ---------- pieces ---------- */
 export function piecePath(c, piece) {
   c.beginPath();
@@ -221,15 +328,16 @@ export function drawFabric(c, garment, fabric, overlays, { fillSheet = false } =
   const fillFor = (c, pieceId) => {
     const override = fabric.pieceColors?.[pieceId];
     if (override) return override;
-    if (fabric.mode === 'linear') {
+    const stops = gradientStops(fabric);
+    if (fabric.mode === 'linear' || fabric.mode === 'gradient') {
       const a = rad(fabric.angle ?? 90), dx = Math.cos(a), dy = Math.sin(a);
       const half = Math.abs(dx) * b.w / 2 + Math.abs(dy) * b.h / 2;
       const g = c.createLinearGradient(b.cx - dx * half, b.cy + dy * half, b.cx + dx * half, b.cy - dy * half);
-      g.addColorStop(0, base); g.addColorStop(1, fabric.color2 || '#000'); return g;
+      for (const s of stops) g.addColorStop(s.p, s.c); return g;
     }
     if (fabric.mode === 'radial') {
       const g = c.createRadialGradient(b.cx, b.y0 + b.h * 0.6, 0, b.cx, b.y0 + b.h * 0.6, Math.max(b.w, b.h) * 0.62);
-      g.addColorStop(0, base); g.addColorStop(1, fabric.color2 || '#000'); return g;
+      for (const s of stops) g.addColorStop(s.p, s.c); return g;
     }
     return base;
   };
@@ -292,13 +400,15 @@ export function prepareOverlayTint(overlays, color) {
   for (const f of overlays.faces) f.tintColored = f.tint ? tintedMask(f.tint, color || '#000') : null;
 }
 
-/** Artwork for all pieces (sheet cm space), each item clipped to its piece. */
-export function drawArtwork(c, garment, items, assets, onReady, pxPerCm) {
+/** Artwork for all pieces (sheet cm space), each item clipped to its piece.
+ *  face 'out' = outside prints; face 'in' = inside prints, stored as seen from inside (mirrored). */
+export function drawArtwork(c, garment, items, assets, onReady, pxPerCm, face = 'out', skipWrap = false) {
   for (const piece of garment.pieces) {
-    const list = items.filter(i => i.piece === piece.id && !i.hidden);
+    const list = items.filter(i => i.piece === piece.id && !i.hidden && (i.face || 'out') === face && !(skipWrap && i.wrap));
     if (!list.length) continue;
     c.save(); c.translate(piece.sx, piece.sy);
     piecePath(c, piece); c.clip();
+    if (face === 'in' && !piece.noMirror) { c.translate(piece.w, 0); c.scale(-1, 1); }
     for (const it of list) drawItem(c, it, assets, onReady, pxPerCm);
     c.restore();
   }
@@ -314,6 +424,16 @@ export function renderAtlas(cv, garment, doc, assets, overlays, ppc, onReady) {
   drawFabric(c, garment, doc.fabric, overlays, { fillSheet: true });
   drawArtwork(c, garment, doc.items, assets, onReady, ppc);
   c.setTransform(1, 0, 0, 1, 0, 0);
+  return cv;
+}
+
+/** One print on its own (no position/rotation), for wrap-over-seams projection. */
+export function itemRaster(it, assets, k = 40, onReady) {
+  const h = itemHeight(it, assets);
+  const s = Math.min(k, 2048 / Math.max(it.w, h));
+  const cv = makeCanvas(it.w * s, h * s), c = cv.getContext('2d');
+  c.scale(s, s);
+  drawItem(c, { ...it, x: it.w / 2, y: h / 2, rot: 0, flip: false, hidden: false, opacity: 1 }, assets, onReady, s);
   return cv;
 }
 

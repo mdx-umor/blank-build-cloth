@@ -177,6 +177,38 @@ export function openEdgeRuns(panel, wr, seed) {
   return runs.map(r => r.map(([x, y]) => [x, y, surfaceZ(panel, x, y, wr, seed)]));
 }
 
+/** Fold shadows: darken creases and concave folds (cavity) — stored as vertex colours. */
+export function cavityAO(geo, strength = 1) {
+  const pos = geo.attributes.position, nrm = geo.attributes.normal, idx = geo.index;
+  const n = pos.count;
+  const sum = new Float32Array(n * 3), cnt = new Uint16Array(n);
+  const add = (a, b) => { sum[a * 3] += pos.getX(b); sum[a * 3 + 1] += pos.getY(b); sum[a * 3 + 2] += pos.getZ(b); cnt[a]++; };
+  const tri = idx ? idx.array : null, tcount = idx ? idx.count : n;
+  for (let i = 0; i < tcount; i += 3) {
+    const a = tri ? tri[i] : i, b = tri ? tri[i + 1] : i + 1, c = tri ? tri[i + 2] : i + 2;
+    add(a, b); add(a, c); add(b, a); add(b, c); add(c, a); add(c, b);
+  }
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    let ao = 1;
+    if (cnt[i]) {
+      const dx = sum[i * 3] / cnt[i] - pos.getX(i), dy = sum[i * 3 + 1] / cnt[i] - pos.getY(i), dz = sum[i * 3 + 2] / cnt[i] - pos.getZ(i);
+      const cav = dx * nrm.getX(i) + dy * nrm.getY(i) + dz * nrm.getZ(i); // > 0: neighbours stand above → crease
+      ao = 1 - Math.max(0, Math.min(0.5, cav * 2.2 * strength));
+    }
+    col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = ao;
+  }
+  // soften once so the shading is smooth
+  const sm = new Float32Array(n);
+  for (let i = 0; i < tcount; i += 3) {
+    const a = tri ? tri[i] : i, b = tri ? tri[i + 1] : i + 1, c = tri ? tri[i + 2] : i + 2;
+    const m = (col[a * 3] + col[b * 3] + col[c * 3]) / 3; sm[a] += m; sm[b] += m; sm[c] += m;
+  }
+  for (let i = 0; i < n; i++) if (cnt[i]) { const v = 0.5 * col[i * 3] + 0.5 * sm[i] / (cnt[i] / 2); col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = Math.max(0.55, Math.min(1, v)); }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+
 function tube(pts3, r, seg = 64, closed = false) {
   const curve = new THREE.CatmullRomCurve3(pts3.map(p => new THREE.Vector3(...p)), closed, 'centripetal');
   return new THREE.TubeGeometry(curve, seg, r, 10, closed);
@@ -190,7 +222,7 @@ export function buildGarmentGroup(garment, mats, opts) {
   const group = new THREE.Group();
   const panelMeshes = [];
   for (const pn of garment.panels) {
-    const geo = buildPanelGeometry(pn, garment, opts);
+    const geo = cavityAO(buildPanelGeometry(pn, garment, opts));
     const outer = new THREE.Mesh(geo, pn.kind === 'rib' ? mats.rib : mats.main);
     outer.castShadow = true; outer.receiveShadow = true;
     outer.userData = { panel: pn, pick: true };
@@ -223,7 +255,7 @@ export function buildGarmentGroup(garment, mats, opts) {
   for (const nl of ex.necklines) {
     const pnl = nl.side > 0 ? front : backP;
     const pts = nl.pts.map(([x, y]) => [x, y - nl.r * 0.55, (pnl ? surfaceZ(pnl, x, y - nl.r * 0.55, wr, seed) : 0) - nl.side * nl.r * 0.45]);
-    const geo = tube(pts, nl.r, 80);
+    const geo = cavityAO(tube(pts, nl.r, 80), 0); // plain white AO so the shared rib material works
     const piece = garment.pieces.find(p => p.id === nl.piece);
     if (piece) { // the rib band is printable: map the tube onto its pattern strip
       const uv = geo.attributes.uv, sh = garment.sheet;
@@ -237,9 +269,16 @@ export function buildGarmentGroup(garment, mats, opts) {
     const L = ex.label;
     const zl = Math.max(surfaceZ(backP, L.x, L.y, wr, seed), surfaceZ(backP, L.x, L.y - L.h, wr, seed), surfaceZ(backP, L.x - L.w / 2, L.y - L.h / 2, wr, seed), surfaceZ(backP, L.x + L.w / 2, L.y - L.h / 2, wr, seed)) + 0.18;
     const geo = new THREE.PlaneGeometry(L.w, L.h, 4, 2);
+    // the label is a printable pattern piece: map the plane onto it in the inside atlas
+    const lp = garment.pieces.find(p => p.id === 'label');
+    if (lp) {
+      const uv = geo.attributes.uv, sh = garment.sheet;
+      for (let k = 0; k < uv.count; k++) uv.setXY(k, (lp.sx + uv.getX(k) * lp.w) / sh.w, 1 - (lp.sy + (1 - uv.getY(k)) * lp.h) / sh.h);
+    }
     const m = new THREE.Mesh(geo, mats.label);
     m.position.set(L.x, L.y - L.h / 2, zl);
-    m.receiveShadow = true; group.add(m);
+    if (L.shape === 'loop') m.rotation.x = -0.35; // loop-fold label stands away from the neck a little
+    m.receiveShadow = true; m.userData = { panel: { piece: 'label', role: 'label' }, pick: true }; group.add(m);
   }
   if (ex.hanger && opts.hanger) {
     const H = ex.hanger;

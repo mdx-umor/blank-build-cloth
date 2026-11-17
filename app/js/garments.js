@@ -117,7 +117,7 @@ function frame(O, d, n) {
  * pieces: { id, label, poly (local, y-down), stitches, folds, kind }
  * panels: { piece, outline (garment), side ±1, depth, radius, toLocal (affine garment→local), kind, base?: 'front' }
  */
-export function buildGarment(id) {
+export function buildGarment(id, opts = {}) {
   const meta = GARMENT_LIST.find(g => g.id === id) || GARMENT_LIST[0];
   if (meta.model) { if (!modelCache[meta.id]) throw new Error('model garment not loaded: ' + meta.id); return modelCache[meta.id]; }
   const s = { ...BASE, ...(SPECS[meta.id] || {}) };
@@ -155,7 +155,10 @@ export function buildGarment(id) {
       extras.necklines.push({ pts, side, r: s.neckRib, piece: id, len, h });
     }
   }
-  extras.label = { x: 0, y: top - s.neckB - 1.2, w: 5.6, h: 3.2 };
+  // woven neck label: an inside-only pattern piece (printable), shown on the inside of the back neck
+  const ls = LABEL_SHAPES.find(l => l.id === opts.labelShape) || LABEL_SHAPES[0];
+  extras.label = { x: 0, y: top - s.neckB - 0.9, w: ls.w, h: ls.h, shape: ls.id };
+  pieces.push({ id: 'label', label: 'Label', poly: [[0, 0], [ls.w, 0], [ls.w, ls.h], [0, ls.h]], kind: 'label', insideOnly: true, noMirror: true });
   extras.hanger = { top, neckW: s.neckW, shoulderX: s.shoulderX || s.neckW + 4, drop: s.drop };
 
   /* sleeves */
@@ -277,18 +280,26 @@ function buildTote(meta, s) {
 }
 
 /* ---------- placement presets (piece-local centre & width, cm) ---------- */
+export const LABEL_SHAPES = [
+  { id: 'woven', name: 'Small woven', w: 5, h: 2.6 },
+  { id: 'wide', name: 'Wide', w: 7.5, h: 2.6 },
+  { id: 'square', name: 'Square', w: 4, h: 4 },
+  { id: 'satin', name: 'Tall satin', w: 3.4, h: 6.5 },
+  { id: 'loop', name: 'Loop fold', w: 4.6, h: 3.4 },
+];
+// "Place at" presets: piece, centre as a fraction of the piece, width in cm; face 'in' = inside of the garment
 function presetsFor(g) {
-  const P = (piece, fx, fy, w, name) => ({ name, piece, fx, fy, w });
-  const list = [];
-  if (g.tote) return [P('front', 0.5, 0.5, 26, 'Front · centre'), P('back', 0.5, 0.5, 26, 'Back · centre')];
-  list.push(P('front', 0.5, 0.33, 25, 'Front · centre chest'));
-  list.push(P('front', 0.64, 0.25, 9, 'Front · left chest'));
-  list.push(P('front', 0.5, 0.47, 32, 'Front · full'));
-  list.push(P('back', 0.5, 0.1, 7, 'Back · neck'));
-  list.push(P('back', 0.5, 0.4, 30, 'Back · full'));
-  if (g.pieces.some(p => p.id === 'sleeveL')) list.push(P('sleeveL', 0.5, 0.75, 7, 'Left sleeve'), P('sleeveR', 0.5, 0.75, 7, 'Right sleeve'));
-  if (g.pieces.some(p => p.id === 'hood')) list.push(P('hood', 0.5, 0.4, 16, 'Hood · back'));
-  if (g.pieces.some(p => p.id === 'pocket')) list.push(P('pocket', 0.5, 0.55, 18, 'Pocket'));
+  const P = (piece, fx, fy, w, name, face = 'out') => ({ name, piece, fx, fy, w, face });
+  const has = (id) => g.pieces.some(p => p.id === id);
+  if (g.tote) return [P('front', 0.5, 0.5, 26, 'Front'), P('back', 0.5, 0.5, 26, 'Back')];
+  const list = [P('front', 0.5, 0.33, 25, 'Chest'), P('front', 0.66, 0.24, 9, 'Left chest logo'), P('front', 0.5, 0.8, 20, 'Front bottom'),
+    P('back', 0.5, 0.36, 28, 'Back'), P('back', 0.5, 0.1, 7, 'Back neck')];
+  if (has('sleeveR')) list.push(P('sleeveR', 0.5, 0.75, 7, 'Right sleeve'));
+  if (has('sleeveL')) list.push(P('sleeveL', 0.5, 0.75, 7, 'Left sleeve'));
+  if (has('label')) list.push(P('label', 0.5, 0.5, 3.6, 'Label', 'in'));
+  list.push(P('back', 0.5, 0.075, 7, 'Printed label', 'in'));
+  if (has('hood')) list.push(P('hood', 0.5, 0.4, 16, 'Hood'));
+  if (has('pocket')) list.push(P('pocket', 0.5, 0.55, 18, 'Pocket'));
   return list;
 }
 
