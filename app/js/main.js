@@ -951,7 +951,8 @@ function bindChrome() {
   menu('#exportMoreBtn', '#exportMenu'); menu('#qualityBtn', '#qualityMenu');
   $('#shapesBtn').onclick = (e) => { e.stopPropagation(); openShapes($('#shapesBtn')); };
   $('#shapesMenu').onclick = (e) => { const b = e.target.closest('[data-drawshape]'); if (!b) return; $('#shapesMenu').hidden = true; setTool('shape:' + b.dataset.drawshape); };
-  document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) $$('.menu').forEach(x => (x.hidden = true)); });
+  // any click closes open menus, including choosing an item in one (menu buttons stop the event themselves)
+  document.addEventListener('click', () => $$('.menu').forEach(x => (x.hidden = true)));
   $('#qualityMenu').onclick = (e) => { const b = e.target.closest('[data-q]'); if (!b) return; setQuality(b.dataset.q); };
   setQuality((() => { try { return localStorage.getItem('dm.quality'); } catch { return null; } })() || 'adaptive');
   $('#exportMenu').onclick = (e) => { const b = e.target.closest('[data-act]'); if (b) runExport(b.dataset.act); };

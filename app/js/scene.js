@@ -331,6 +331,7 @@ export class Studio {
   }
 
   resize() {
+    if (this.recording) return; // a size change would break the video being recorded
     const p = this.canvas.parentElement; if (!p) return;
     const w = p.clientWidth, h = p.clientHeight; if (!w || !h) return;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
@@ -470,10 +471,10 @@ export class Studio {
    */
   async recordTurntable({ width, height, seconds = 8, fps = 30, onProgress, signal }) {
     const r = this.renderer;
-    const types = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    const types = ['video/mp4;codecs=avc3.42E01E', 'video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
     const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
     if (!mime) throw new Error('This browser cannot record video.');
-    this.paused = true;
+    this.paused = true; this.recording = true;
     const prev = { pr: r.getPixelRatio(), aspect: this.camera.aspect, yaw: this.viewYaw };
     try {
       r.setPixelRatio(1); r.setSize(width, height, false);
@@ -497,7 +498,7 @@ export class Studio {
     } finally {
       this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw;
       r.setPixelRatio(prev.pr); this.resize();
-      this.paused = false; this.dirty = true;
+      this.paused = false; this.recording = false; this.dirty = true;
     }
   }
 
