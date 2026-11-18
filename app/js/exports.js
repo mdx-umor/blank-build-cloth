@@ -445,15 +445,19 @@ async function pieceSvg(p, face, items, k, wrapPng) {
   <g id="markings" inkscape:groupmode="layer" inkscape:label="Markings" fill="none" stroke="#999" stroke-width="0.03" stroke-dasharray="0.4 0.3">${(p.folds || []).map(fl => `<line x1="${fl[0][0]}" y1="${fl[0][1]}" x2="${fl[1][0]}" y2="${fl[1][1]}"/>`).join('')}</g>
 </svg>`;
 }
-// grow coloured pixels outwards by `px` (so a print reaches past the cut line without a white edge)
+// grow coloured pixels outwards by `px` (so a print reaches past the cut line without a white edge).
+// Each pass spreads the picture by a doubling step, so it takes a handful of passes, not one per pixel.
 function dilate(cv, px) {
   const out = makeCanvas(cv.width, cv.height), c = out.getContext('2d');
   c.drawImage(cv, 0, 0);
-  const steps = Math.max(1, Math.ceil(px / 2));
-  for (let i = 1; i <= steps; i++) {
-    const d = (px * i) / steps;
+  const tmp = makeCanvas(cv.width, cv.height), t = tmp.getContext('2d');
+  let done = 0;
+  for (let d = 1; done < px; d *= 2) {
+    const step = Math.min(d, px - done);
+    t.clearRect(0, 0, tmp.width, tmp.height); t.drawImage(out, 0, 0);
     c.globalCompositeOperation = 'destination-over';
-    for (let a = 0; a < 8; a++) c.drawImage(cv, Math.cos(a * Math.PI / 4) * d, Math.sin(a * Math.PI / 4) * d);
+    for (let a = 0; a < 8; a++) c.drawImage(tmp, Math.round(Math.cos(a * Math.PI / 4) * step), Math.round(Math.sin(a * Math.PI / 4) * step));
+    done += step;
   }
   return out;
 }
@@ -522,7 +526,7 @@ async function exportPrintFiles({ k = 1, fmt = 'orig' } = {}) {
       if (!parts.length) continue;
       const files = [];
       for (const part of parts) { const f = `prints/wrap-${slug(itemName(it))}-${slug(part.p.label)}.png`; zip.file(f, part.png); files.push(f); }
-      lines.push(`${kind(it)} ${itemName(it)} (wraps over seams)`, `  One print over ${parts.length} pieces: ${parts.map(x => x.p.label).join(', ')}. The parts meet at the green seams. Each file reaches ${L(bleed * k)} past the cut line.`, `  Files: ${files.join(', ')}`, '');
+      lines.push(`${kind(it)} ${itemName(it)} (wraps over seams)`, `  One print over ${parts.length} pieces: ${parts.map(x => x.p.label).join(', ')}. The parts meet at the seams once sewn. Each file reaches ${L(bleed * k)} past the cut line.`, `  Files: ${files.join(', ')}`, '');
     }
     if (window.jspdf) { say('Adding the spec sheet…'); zip.file('spec-sheet.pdf', (await buildSpecPdf(say, k)).output('arraybuffer')); }
     zip.file('README.txt', [`Print files — ${app.doc.name || 'Untitled design'}`, `${app.garment.name} (${app.garment.cut})`, scaledNote(k), '',
@@ -561,7 +565,6 @@ async function exportSublimation({ k = 1, bleed = 1, cut = false, mirror = false
     bc.setTransform(kb, 0, 0, kb, 0, 0); drawFabric(bc, g, app.doc.fabric, app.overlays, { fillSheet: true });
     let wrap = null; // prints that wrap over seams, baked from 3D, grown past the seams by the bleed
     for (const it of visibleItems().filter(i => i.wrap && (i.face || 'out') === 'out')) { const l = E.bakeWrapItem(it, base.width, base.height); if (l) { wrap = wrap || makeCanvas(base.width, base.height); wrap.getContext('2d').drawImage(l, 0, 0); } }
-    if (wrap) wrap = dilate(wrap, bleed * kb);
     const ps = g.pieces.filter(q => !q.insideOnly), lines = [];
     for (const [n, p] of ps.entries()) {
       say(`Preparing panel ${n + 1} of ${ps.length}…`);
@@ -575,7 +578,12 @@ async function exportSublimation({ k = 1, bleed = 1, cut = false, mirror = false
       c.drawImage(base, -p.sx, -p.sy, g.sheet.w, g.sheet.h);
       c.globalCompositeOperation = 'source-atop';
       for (const it of visibleItems().filter(i => i.piece === p.id && (i.face || 'out') === 'out' && !i.wrap)) drawItem(c, it, app.assets, null, s);
-      if (wrap) c.drawImage(wrap, -p.sx, -p.sy, g.sheet.w, g.sheet.h);
+      if (wrap) { // this panel's part of the wrapped prints, grown past the cut line by the bleed
+        const bm = bleed / k, rw = Math.ceil((p.w + 2 * bm) * kb), rh = Math.ceil((p.h + 2 * bm) * kb);
+        const part = makeCanvas(rw, rh), pc = part.getContext('2d');
+        pc.setTransform(kb, 0, 0, kb, bm * kb, bm * kb); piecePath(pc, p); pc.clip(); pc.drawImage(wrap, -p.sx, -p.sy, g.sheet.w, g.sheet.h);
+        c.drawImage(dilate(part, Math.ceil(bm * kb)), -bm, -bm, p.w + 2 * bm, p.h + 2 * bm);
+      }
       c.restore();
       if (cut) { c.save(); piecePath(c, p); c.lineWidth = 0.6 / s * (dpi / 150); c.setLineDash([0.5 / k, 0.35 / k]); c.strokeStyle = '#000000'; c.stroke(); c.setLineDash([]); c.restore(); }
       let out = cv;
