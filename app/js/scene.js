@@ -119,7 +119,9 @@ export class Studio {
     this._edgeCache = edgeCache;
     const button = new THREE.MeshPhysicalMaterial({ color: 0xf2f0ea, roughness: 0.28, clearcoat: 0.6, clearcoatRoughness: 0.2 });
     const thread = new THREE.MeshStandardMaterial({ color: 0xe9e6df, roughness: 0.9 });
-    return { main, rib, inner, trim, label, hanger, cord, aglet, edge, button, thread };
+    // a zip: a coil on a woven tape, a soft satin sheen (not the glossy look of a button)
+    const zip = new THREE.MeshPhysicalMaterial({ color: 0xf2f0ea, roughness: 0.55, sheen: 0.4, sheenRoughness: 0.6, sheenColor: 0xffffff });
+    return { main, rib, inner, trim, label, hanger, cord, aglet, edge, button, thread, zip };
   }
 
   loadGLB(url) {
@@ -193,7 +195,7 @@ export class Studio {
         this.mats.innerFront.map = this.mats.inner.map;
         const m = new THREE.Mesh(geo, this.mats.innerFront); m.receiveShadow = true; m.castShadow = true; group.add(m);
       } else {
-        const m = new THREE.Mesh(geo, name.startsWith('Thread') ? this.mats.thread : name.startsWith('Cord') ? this.mats.cord : this.mats.button);
+        const m = new THREE.Mesh(geo, name.startsWith('Thread') ? this.mats.thread : name.startsWith('Cord') ? this.mats.cord : name.startsWith('Zip') ? this.mats.zip : this.mats.button);
         m.castShadow = m.receiveShadow = true; group.add(m);
       }
     });

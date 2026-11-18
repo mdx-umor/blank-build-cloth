@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pattern Cutter</title>
+<meta name="description" content="Draw the seams of a 3D garment and name its pieces, then hand the cut to Design Master.">
+<link rel="icon" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --ink: #1f2330; --muted: #6a7080; --faint: #a0a6b2;
+  --line: #e5e7ec; --line-strong: #d3d7de; --field: #ffffff; --hover: #f1f2f6;
+  --accent: #5b5bd6; --accent-hover: #4b4bc4; --accent-soft: #ececfd; --accent-ink: #fff; --danger: #d6455d;
+  --stage: #e9eaee; --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 6px 18px rgba(16, 24, 40, .08);
+  --glass: rgba(255, 255, 255, .9); --radius: 10px;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17181c; --panel: #202126; --ink: #e8e9ee; --muted: #a2a7b3; --faint: #6c7180;
+    --line: #2f3138; --line-strong: #3d4048; --field: #1a1b1f; --hover: #2a2c33;
+    --accent: #7b7bf0; --accent-hover: #8f8ff5; --accent-soft: #2b2b4d; --danger: #f07c8f;
+    --stage: #2a2b2f; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .35);
+    --glass: rgba(36, 38, 44, .9); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17181c; --panel: #202126; --ink: #e8e9ee; --muted: #a2a7b3; --faint: #6c7180;
+  --line: #2f3138; --line-strong: #3d4048; --field: #1a1b1f; --hover: #2a2c33;
+  --accent: #7b7bf0; --accent-hover: #8f8ff5; --accent-soft: #2b2b4d; --danger: #f07c8f;
+  --stage: #2a2b2f; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .35);
+  --glass: rgba(36, 38, 44, .9); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--font); display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; flex-wrap: wrap; }
+header .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; color: inherit; white-space: nowrap; }
+header .brand svg { width: 26px; height: 26px; }
+header .model { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+header .grow { flex: 1; }
+.btn { border: 1px solid var(--line-strong); background: var(--field); border-radius: 8px; padding: 6px 11px; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn:disabled { opacity: .45; cursor: default; }
+main { display: grid; grid-template-columns: 290px 1fr; min-height: 0; }
+aside { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+aside h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.tool { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong); background: var(--field); border-radius: 8px; padding: 7px 8px; cursor: pointer; text-align: left; }
+.tool:hover { background: var(--hover); }
+.tool[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.tool kbd { margin-left: auto; font-size: 11px; color: var(--faint); font-family: inherit; }
+.tool svg { width: 17px; height: 17px; flex: none; }
+.row { display: flex; align-items: center; gap: 8px; }
+.row label { flex: 1; color: var(--muted); }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.pieces { display: flex; flex-direction: column; gap: 3px; }
+.piece { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
+.piece:hover { background: var(--hover); }
+.piece[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.piece .sw { width: 16px; height: 16px; border-radius: 4px; flex: none; border: 1px solid rgba(0,0,0,.15); }
+.piece .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.piece .ar { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.piece .x { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 2px; visibility: hidden; }
+.piece:hover .x { visibility: visible; }
+.steps { margin: 0; padding-left: 18px; color: var(--muted); }
+.steps li { margin: 2px 0; }
+.stage { position: relative; background: var(--stage); min-width: 0; min-height: 0; }
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.hud { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; flex-wrap: wrap; }
+.hint { pointer-events: auto; background: var(--glass); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow); max-width: 560px; }
+.hint b { font-weight: 600; }
+.views { pointer-events: auto; margin-left: auto; display: flex; gap: 4px; background: var(--glass); border: 1px solid var(--line); border-radius: 10px; padding: 4px; box-shadow: var(--shadow); }
+.views button { border: 0; background: none; padding: 5px 9px; border-radius: 7px; cursor: pointer; color: var(--muted); }
+.views button:hover { background: var(--hover); color: var(--ink); }
+.status { position: absolute; left: 12px; bottom: 12px; background: var(--glass); border: 1px solid var(--line); border-radius: 10px; padding: 6px 11px; color: var(--muted); box-shadow: var(--shadow); font-variant-numeric: tabular-nums; }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-weight: 500; }
+.loading[hidden] { display: none; }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--ink); box-shadow: var(--shadow); width: min(640px, calc(100vw - 32px)); padding: 18px; }
+dialog::backdrop { background: rgba(10, 12, 20, .35); }
+dialog h2 { margin: 0 0 8px; font-size: 18px; }
+dialog p { margin: 6px 0; color: var(--muted); }
+dialog textarea { width: 100%; height: 220px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--field); padding: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+dialog .act { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 9px; box-shadow: var(--shadow); opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; max-width: calc(100vw - 32px); }
+.toast.on { opacity: 1; }
+input[type="range"] { accent-color: var(--accent); width: 120px; }
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  aside { order: 2; max-height: 42vh; border-right: 0; border-top: 1px solid var(--line); }
+  .views { margin-left: 0; }
+}
+</style>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three/three.module.js", "three/addons/": "../vendor/three/addons/" } }
+</script>
+</head>
+<body>
+<header>
+  <a class="brand" href="../" title="Back to Design Master">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M8 9h5.2c4.4 0 7 2.7 7 7s-2.6 7-7 7H8z" fill="none" stroke="#fff" stroke-width="2.4"/><path d="M17.5 23V9l3.3 7 3.2-7v14" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" opacity=".9"/></svg>
+    <span>Pattern cutter</span>
+  </a>
+  <span class="model" id="modelName">Loading…</span>
+  <span class="grow"></span>
+  <button class="btn" id="openBtn" title="Open your own 3D model (GLB, glTF, OBJ, FBX)">Open model…</button>
+  <button class="btn" id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
+  <button class="btn" id="redoBtn" title="Redo (Ctrl+Shift+Z)">Redo</button>
+  <button class="btn" id="importBtn" title="Load a cut you saved or copied before">Load cut…</button>
+  <button class="btn" id="saveBtn" title="Download the cut as a file">Save file</button>
+  <button class="btn primary" id="copyBtn" title="Copy the cut as text to paste in the chat">Copy for Claude</button>
+  <input type="file" id="fileModel" accept=".glb,.gltf,.obj,.fbx" hidden>
+  <input type="file" id="fileCut" accept=".json,.txt" hidden>
+</header>
+<main>
+  <aside>
+    <section>
+      <h3>How it works</h3>
+      <ol class="steps">
+        <li><b>Draw seams</b> along every seam line, so each piece is closed in.</li>
+        <li><b>Fill</b> each piece: choose it below, click inside it.</li>
+        <li><b>Brush</b> small parts (drawcords, the zip).</li>
+        <li><b>Copy for Claude</b> and paste it in the chat.</li>
+      </ol>
+    </section>
+    <section>
+      <h3>Tools</h3>
+      <div class="tools" role="toolbar" aria-label="Tools">
+        <button class="tool" data-tool="seam" aria-pressed="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 16 8 9l4 3 5-8"/><circle cx="3" cy="16" r="1.6" fill="currentColor"/><circle cx="8" cy="9" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="17" cy="4" r="1.6" fill="currentColor"/></svg>Draw seam<kbd>S</kbd></button>
+        <button class="tool" data-tool="fill" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 9 9 4l7 7-5 5z"/><path d="M4 9h12" /><path d="M16.5 13.5c0 1.2 1 2.4 1 3a1 1 0 0 1-2 0c0-.6 1-1.8 1-3z" fill="currentColor"/></svg>Fill piece<kbd>F</kbd></button>
+        <button class="tool" data-tool="brush" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M16.5 3.5 9 11"/><path d="M8.5 11.5c-2 0-3.5 1.3-3.5 3 0 1.4-1 2-2 2 3 1.6 7.5.3 7.5-3z"/></svg>Brush<kbd>B</kbd></button>
+        <button class="tool" data-tool="erase" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m8 16-4-4 8-8 6 6-6 6z"/><path d="M8 16h9"/></svg>Erase<kbd>E</kbd></button>
+      </div>
+    </section>
+    <section>
+      <label class="check"><input type="checkbox" id="mirror" checked> Mirror left ↔ right</label>
+      <div class="row" style="margin-top:8px"><label for="brushSize">Brush size</label><input type="range" id="brushSize" min="4" max="60" value="14"><span id="brushVal" style="width:40px;text-align:right">14 mm</span></div>
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="showAuto"> Show Claude's automatic cut</label>
+    </section>
+    <section>
+      <h3>Pieces</h3>
+      <div class="pieces" id="pieces" role="listbox" aria-label="Pieces"></div>
+      <button class="btn" id="addPiece" style="margin-top:6px;width:100%">+ Add a piece</button>
+    </section>
+    <section>
+      <button class="btn" id="clearBtn" style="width:100%">Start over</button>
+    </section>
+  </aside>
+  <div class="stage" id="stage">
+    <canvas id="gl"></canvas>
+    <div class="hud">
+      <div class="hint" id="hint"></div>
+      <div class="views" role="group" aria-label="Views">
+        <button data-view="front">Front</button><button data-view="back">Back</button><button data-view="left">Left</button><button data-view="right">Right</button><button data-view="top">Top</button><button data-view="bottom">Under</button>
+      </div>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="loading" id="loading">Loading the model…</div>
+  </div>
+</main>
+<dialog id="copyDlg">
+  <h2>Your cut</h2>
+  <p id="copyMsg">Copied. Paste it in the chat with Claude.</p>
+  <textarea id="copyText" readonly spellcheck="false"></textarea>
+  <div class="act"><button class="btn" id="copyAgain">Copy again</button><button class="btn" id="copyDl">Save as file</button><button class="btn primary" id="copyClose">Done</button></div>
+</dialog>
+<dialog id="loadDlg">
+  <h2>Load a cut</h2>
+  <p>Paste a cut you copied before, or open a saved file.</p>
+  <textarea id="loadText" spellcheck="false" placeholder='{"format":"design-master-cut", …}'></textarea>
+  <div class="act"><button class="btn" id="loadFile">Open file…</button><button class="btn" id="loadCancel">Cancel</button><button class="btn primary" id="loadOk">Load</button></div>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="./cutter.js"></script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+{
+ "name": "Zip hoodie",
+ "crop": [
+  588,
+  30
+ ],
+ "back_centre_cm": 239.77,
+ "pieces": {
+  "frontL": {
+   "traced": 6,
+   "label": "Front \u00b7 left"
+  },
+  "frontR": {
+   "traced": 7,
+   "label": "Front \u00b7 right"
+  },
+  "back": {
+   "traced": 5,
+   "label": "Back",
+   "mirror_left_half": true
+  },
+  "sleeveL": {
+   "traced": 8,
+   "label": "Left sleeve"
+  },
+  "sleeveR": {
+   "traced": 9,
+   "label": "Right sleeve"
+  },
+  "cuffL": {
+   "traced": 11,
+   "label": "Left cuff"
+  },
+  "cuffR": {
+   "traced": 10,
+   "label": "Right cuff"
+  },
+  "waistbandB": {
+   "traced": 12,
+   "label": "Waistband \u00b7 back"
+  },
+  "waistbandL": {
+   "traced": 14,
+   "label": "Waistband \u00b7 front left"
+  },
+  "waistbandR": {
+   "traced": 13,
+   "label": "Waistband \u00b7 front right"
+  },
+  "hoodL": {
+   "traced": 4,
+   "label": "Hood \u00b7 left"
+  },
+  "hoodR": {
+   "traced": 3,
+   "label": "Hood \u00b7 right"
+  }
+ },
+ "pockets": [
+  [
+   "frontL",
+   "pocketL",
+   "zip-left"
+  ],
+  [
+   "frontR",
+   "pocketR",
+   "zip-right"
+  ]
+ ],
+ "presets": [
+  {
+   "name": "Left chest",
+   "piece": "frontL",
+   "fx": 0.5,
+   "fy": 0.24,
+   "w": 9
+  },
+  {
+   "name": "Right chest",
+   "piece": "frontR",
+   "fx": 0.5,
+   "fy": 0.24,
+   "w": 9
+  },
+  {
+   "name": "Back",
+   "piece": "back",
+   "fx": 0.5,
+   "fy": 0.34,
+   "w": 30
+  },
+  {
+   "name": "Back neck",
+   "piece": "back",
+   "fx": 0.5,
+   "fy": 0.1,
+   "w": 8
+  },
+  {
+   "name": "Left sleeve",
+   "piece": "sleeveL",
+   "fx": 0.5,
+   "fy": 0.45,
+   "w": 8
+  },
+  {
+   "name": "Right sleeve",
+   "piece": "sleeveR",
+   "fx": 0.5,
+   "fy": 0.45,
+   "w": 8
+  },
+  {
+   "name": "Hood",
+   "piece": "hoodL",
+   "fx": 0.55,
+   "fy": 0.5,
+   "w": 10
+  }
+ ]
+}

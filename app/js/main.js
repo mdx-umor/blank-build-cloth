@@ -112,11 +112,19 @@ async function applyGarment(id, { reframe = false } = {}) {
   $('#pieceCount').textContent = `${editor.visiblePieces().length} pieces`;
   renderAll(); syncChrome();
 }
+// drawcords: white unless chosen; a zip takes the fabric colour unless chosen (a stark white zip on a coloured hoodie
+// looks like a gap); buttons: off-white
+function setTrimColours() {
+  const d = app.doc;
+  studio.mats.cord.color.set(d.details.cord || '#ffffff');
+  studio.mats.button.color.set(d.details.buttons || '#f2f0ea');
+  studio.mats.zip.color.set(d.details.zip || d.fabric.color || '#f2f0ea');
+}
 function rebuildGeometry(reframe = false) {
   const d = app.doc;
   const r = studio.setGarment(app.garment, { wrinkles: (d.fabric.wrinklesOn === false ? 0 : d.fabric.wrinkles) * 1.6, label: d.details.label, hanger: d.scene.hanger, res: 100, reframe, seed: 3 });
   Promise.resolve(r).then(() => scheduleAtlas()); // wrapped prints need the new 3D surface
-  studio.mats.cord.color.set(d.details.cord || '#ffffff'); studio.mats.button.color.set(d.details.buttons || '#f2f0ea');
+  setTrimColours();
   lastGeoKey = geoKey();
 }
 const rebuildGeometrySoon = debounce(() => {
@@ -400,7 +408,7 @@ function slider(k, label, min, max, step, opts = {}) {
   return `<div class="row"><label>${label}</label><div class="ctl"><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${v}" ${opts.pct ? 'data-pct' : ''} ${opts.x ? 'data-x' : ''} data-suf="${opts.suf || ''}" aria-label="${label}"><span class="val" data-v="${k}">${shown}</span></div></div>`;
 }
 const eyeBtn = (k) => 'EyeDropper' in window ? `<button class="ib" data-eye="${k}" title="Eyedropper: pick a colour from the screen">${ICON.drop}</button>` : '';
-function colorRow(k, label) { const v = get(k) || '#000000'; return `<div class="row"><label>${label}</label><div class="ctl color"><input type="color" data-k="${k}" value="${v}" aria-label="${label}"><input type="text" data-k="${k}" data-hex value="${v}" maxlength="7" aria-label="${label}">${eyeBtn(k)}</div></div>`; }
+function colorRow(k, label, fallback) { const v = get(k) || fallback || '#000000'; return `<div class="row"><label>${label}</label><div class="ctl color"><input type="color" data-k="${k}" value="${v}" aria-label="${label}"><input type="text" data-k="${k}" data-hex value="${v}" maxlength="7" aria-label="${label}">${eyeBtn(k)}</div></div>`; }
 function swatchRow(k, list, title = 'Colour') {
   const v = (get(k) || '').toLowerCase();
   return `<div class="swatches">${list.map(c => `<button style="background:${c}" data-setk="${k}" data-val="${c}" class="${c.toLowerCase() === v ? 'on' : ''}" title="${title} ${c}" aria-label="${title} ${c}"></button>`).join('')}</div>
@@ -583,7 +591,7 @@ function renderFabric() {
     const col = gr.pieces.map(id => f.pieceColors?.[id]).find(Boolean) || f.color;
     return `<div class="trow"><span>${gr.name}</span><span style="display:flex;gap:8px;align-items:center">${on ? `<input type="color" data-block="${gr.id}" value="${col}" style="width:28px;height:24px;border:1px solid var(--line-strong);border-radius:6px;padding:0;background:none" aria-label="${gr.name} colour">` : ''}<label class="toggle"><input type="checkbox" data-blockon="${gr.id}" ${on ? 'checked' : ''} aria-label="${gr.name}"><span></span></label></span></div>`;
   }).join('') + `<div class="hintline">Give sleeves, hood, collar or ribs their own colour.</div>`);
-  if (g.extras.strings.length || g.model) html += sec('Trims', `${g.extras.strings.length || g.trims?.cords ? colorRow('details.cord', 'Drawcords') : ''}${g.model ? colorRow('details.buttons', g.trims?.zip ? 'Zip' : 'Buttons') : ''}`);
+  if (g.extras.strings.length || g.model) html += sec('Trims', `${g.extras.strings.length || g.trims?.cords ? colorRow('details.cord', 'Drawcords') : ''}${g.model ? (g.trims?.zip ? colorRow('details.zip', 'Zip', app.doc.fabric.color) : colorRow('details.buttons', 'Buttons')) : ''}`);
   html += defaultsSec();
   $('#tabFabric').innerHTML = html;
 }
@@ -675,10 +683,10 @@ function onValue(path, live) {
     if (key === 'color2') prepareOverlayTint(app.overlays, app.doc.fabric.color2);
     if (['type', 'knit', 'relief', 'ao', 'bright', 'contrast'].includes(key)) studio.updateFabric(app.doc.fabric);
     else if (key === 'wrinkles' || key === 'wrinklesOn') { rebuildGeometrySoon(); if (!live) renderFabric(); }
-    else { rebuildBase(); studio.updateFabric(app.doc.fabric); if (key === 'color' && app.doc.details.labelAsFabric) scheduleAtlas(); }
+    else { rebuildBase(); studio.updateFabric(app.doc.fabric); if (key === 'color') { if (app.doc.details.labelAsFabric) scheduleAtlas(); setTrimColours(); } }
     if (!live && ['mode', 'wash', 'heather', 'color', 'stops'].includes(key)) renderFabric();
   } else if (scope === 'details') {
-    studio.mats.cord.color.set(app.doc.details.cord || '#fff'); studio.mats.button.color.set(app.doc.details.buttons || '#f2f0ea');
+    setTrimColours();
     if (['labelColor', 'labelAsFabric'].includes(key)) { scheduleAtlas(); editor.redraw(); }
     if (key === 'label' || key === 'labelShape') rebuildGeometrySoon();
     if (!live) { renderScene(); syncChrome(); }

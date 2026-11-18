@@ -269,6 +269,8 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
 .models input[type=search] { height: 32px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 0 10px; background: var(--field); }
 .model-grid { overflow: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start; flex: 1; }
 .model-grid.list { grid-template-columns: 1fr; }
+.models-foot { display: block; margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); text-decoration: none; font-size: 12.5px; }
+.models-foot:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .model-grid.list .gcard { flex-direction: row; align-items: center; }
 .model-grid.list .gcard .gimg { width: 64px; flex: none; }
 .model-grid .gcard { padding: 8px; }

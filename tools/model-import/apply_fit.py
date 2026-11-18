@@ -1,6 +1,6 @@
 # Last step for a garment cut with hoodie_build.py ('cut') and fitted with fit_panels.py: write the fitted pattern
 # positions into the model as its UVs (sheet cm / 100), send what lies inside a pocket outline on a front to the
-# pocket piece, let the lining and stray bits take the UV of the nearest panel, set the materials, export the GLB.
+# pocket piece (only when pairs.json has one), let the lining and stray bits take the UV of the nearest panel, set the materials, export the GLB.
 #   blender -b cut.blend --python apply_fit.py -- <object> <dir with panels.json, labels.json, fit.json> <out.glb>
 import bpy, bmesh, sys, json
 from mathutils import Vector
@@ -40,7 +40,7 @@ for pn in panels:
     pk = pockets.get(pn['id'])
     for fi, locs in by_face.items():
         f = bm.faces[fi]; xy = [pts[l] for l in locs]
-        if pk:
+        if pk and 'H' in pk:  # only when the pocket is a piece of its own
             cx = sum(p[0] for p in xy) / len(xy); cy = sum(p[1] for p in xy) / len(xy)
             if inside(cx, cy, pk['outline']): xy = [persp(pk['H'], x, y) for x, y in xy]; pocketed += 1
         for lp, (x, y) in zip(f.loops, xy): lp[uvl].uv = (x / 100, -y / 100)

@@ -69,9 +69,11 @@ scale_all = math.sqrt(sum(abs(area(pieces[pn['id']]['poly'])) for pn in _main) /
 print('model scale to match the pattern:', round(scale_all, 3))
 wb = [np.array(p['verts'])[:, :2] for p in panels if p['id'].startswith('waistband')]
 torso_c = np.concatenate(wb).mean(0) if wb else np.zeros(2)
+import os
+_only = set(filter(None, os.environ.get('FIT_ONLY', '').split(',')))   # for experiments: fit only these panels
 for pn in panels:
     pid = pn['id']
-    if pid not in pieces: continue
+    if pid not in pieces or (_only and pid not in _only): continue
     V = np.array(pn['verts']); X3, F2 = V[:, :3], V[:, 3:5].copy(); tris = np.array(pn['tris'])
     n = len(V)
     # outline of the panel (edges used by one triangle), the longest loop
@@ -118,6 +120,12 @@ for pn in panels:
     if pairs.get('method', 'shape') == 'shape':
         # keep the panel's own flat shape (prints stay true), at the pattern's scale; slide/turn it over the piece
         # to where they overlap most, then tuck in whatever sticks out past the piece's edge
+        # stand it upright: the direction the 3D height grows in on the flat piece points up the sheet (−y)
+        A_ = np.column_stack([F2[:, 0], F2[:, 1], np.ones(n)]); ga, gb, _ = np.linalg.lstsq(A_, X3[:, 2], rcond=None)[0]
+        if ga * ga + gb * gb > 1e-12:
+            rot = -math.pi / 2 - math.atan2(gb, ga); cr, sr = math.cos(rot), math.sin(rot)
+            c0 = F2.mean(0); F2 = (F2 - c0) @ np.array([[cr, sr], [-sr, cr]]) + c0
+            if abs(math.degrees(rot)) > 2: print(f'{pid}: stood upright, turned {math.degrees(rot):.0f}°')
         G0 = F2 * scale_all; S_ = 2.0
         Pa = np.array(P); x0, y0 = np.minimum(Pa.min(0), G0.min(0) - Cp + Pa.mean(0)) - 40; Wd, Hd = int((Pa[:, 0].max() - x0 + 80) * S_), int((Pa[:, 1].max() - y0 + 80) * S_)
         mp = np.zeros((Hd, Wd), np.float32); cv2.fillPoly(mp, [np.round((Pa - [x0, y0]) * S_).astype(np.int32)], 1.0)
@@ -131,6 +139,9 @@ for pn in panels:
             iy, ix = np.unravel_index(np.argmax(cc), cc.shape); val = cc[iy, ix]
             dy = iy if iy < Hd / 2 else iy - Hd; dx = ix if ix < Wd / 2 else ix - Wd
             if best is None or val > best[0]: best = (val, Gr + np.array([dx, dy]) / S_, deg)
+            if deg == 0: upright = (val, Gr + np.array([dx, dy]) / S_, deg)
+        # pieces hang upright: keep it straight unless turning fits clearly better (a turned piece tilts the print)
+        if best[2] != 0 and upright[0] >= best[0] * 0.97: best = upright
         out = best[1]
         # anchor by a seam: slide sideways so a known line of the 3D panel sits on the matching edge of the piece
         X = X3[:, 0]; Y = X3[:, 1]; Z = X3[:, 2]; px0, px1 = Pa[:, 0].min(), Pa[:, 0].max()
@@ -144,15 +155,54 @@ for pn in panels:
             face = Y < Y.min() + 0.02                                                                  # the face opening
             if face.sum() > 5: anchor = (np.median(out[face, 0]), px0 if pid == 'hoodL' else px1)
         if anchor: out[:, 0] += anchor[1] - anchor[0]
-        # tuck in: points outside the piece go to the nearest point of its edge
-        E0 = Pa; E1 = np.roll(Pa, -1, 0); ins = np.array([cv2.pointPolygonTest(Pa.astype(np.float32), (float(x), float(y)), False) >= 0 for x, y in out])
-        for i in np.nonzero(~ins)[0]:
-            q = out[i]; d = E1 - E0; tt = np.clip(((q - E0) * d).sum(1) / ((d * d).sum(1) + 1e-12), 0, 1); proj = E0 + d * tt[:, None]
-            out[i] = proj[np.argmin(((proj - q) ** 2).sum(1))]
+        # ease in: what sticks out past the piece's edge is brought inside by squeezing a band along the edge (as wide
+        # as needed, at least 4 cm), along the edge's normal, so nothing is crushed onto the edge line (that smears a
+        # print); how far to squeeze varies smoothly along the edge
+        Pf = Pa.astype(np.float32); E0 = Pa; E1 = np.roll(Pa, -1, 0); dE = E1 - E0
+        ins = np.array([cv2.pointPolygonTest(Pf, (float(x), float(y)), False) >= 0 for x, y in out])
+        def nearest_edge(q):
+            tt = np.clip(((q - E0) * dE).sum(1) / ((dE * dE).sum(1) + 1e-12), 0, 1); pr = E0 + dE * tt[:, None]
+            k = np.argmin(((pr - q) ** 2).sum(1)); return pr[k], math.sqrt(((pr[k] - q) ** 2).sum())
+        dist_in = np.array([cv2.pointPolygonTest(Pf, (float(x), float(y)), True) for x, y in out])  # + inside, − outside
+        near = np.nonzero(dist_in < 12)[0]
+        proj = np.zeros((len(out), 2)); dist = np.zeros(len(out))
+        for i in near: proj[i], dist[i] = nearest_edge(out[i])
+        outs = near[~ins[near]]
+        if len(outs):
+            R = 6.0
+            # how far it sticks out near each point (smoothly along the edge)
+            reach = np.zeros(len(near))
+            for a in range(0, len(near), 800):
+                dd = np.sqrt(((proj[near[a:a + 800]][:, None, :] - proj[outs][None, :, :]) ** 2).sum(2))
+                reach[a:a + 800] = (dist[outs][None, :] * np.clip(1 - dd / R, 0, None)).max(1)
+            new = out.copy()
+            for kk, i in enumerate(near):
+                dm = reach[kk]
+                if dm <= 1e-6: continue
+                B = min(11.5, max(4.0, dm))
+                sd = -dist[i] if ins[i] else dist[i]             # signed distance, + outside
+                if sd <= -B: continue
+                nrm = (out[i] - proj[i]) / (dist[i] or 1) if not ins[i] else (proj[i] - out[i]) / (dist[i] or 1)
+                if dist[i] < 1e-6: continue
+                s2 = -B + (sd + B) * B / (B + dm)                  # −B stays, the furthest point lands on the edge
+                new[i] = proj[i] + nrm * min(s2, -0.05)
+            # smooth the push over neighbouring points (neighbours pushed different ways would fold the print), then
+            # bring in what is still a hair outside
+            D = new - out
+            rows = np.concatenate([tris[:, 0], tris[:, 1], tris[:, 2], tris[:, 1], tris[:, 2], tris[:, 0]])
+            cols = np.concatenate([tris[:, 1], tris[:, 2], tris[:, 0], tris[:, 0], tris[:, 1], tris[:, 2]])
+            Wm = coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(len(out), len(out))).tocsr(); Wm.data[:] = 1.0
+            deg = np.asarray(Wm.sum(1)).ravel(); deg[deg == 0] = 1
+            for _ in range(40): D = 0.5 * D + 0.5 * (Wm @ D) / deg[:, None]
+            out = out + D
+            for i in range(len(out)):
+                if cv2.pointPolygonTest(Pf, (float(out[i, 0]), float(out[i, 1])), False) < 0: out[i] = nearest_edge(out[i])[0]
         cover = best[0] / mp.sum()
         Q = out[tris]; sgn = (Q[:, 1, 0] - Q[:, 0, 0]) * (Q[:, 2, 1] - Q[:, 0, 1]) - (Q[:, 2, 0] - Q[:, 0, 0]) * (Q[:, 1, 1] - Q[:, 0, 1])
+        Q0 = G0[tris]; sg0 = (Q0[:, 1, 0] - Q0[:, 0, 0]) * (Q0[:, 2, 1] - Q0[:, 0, 1]) - (Q0[:, 2, 0] - Q0[:, 0, 0]) * (Q0[:, 1, 1] - Q0[:, 0, 1])
+        flips = int(((sgn * sg0) < 0).sum())
         fit[pid] = out.round(3).tolist()
-        report.append(f"{pid:12s} kept its shape: covers {cover * 100:.0f}% of the piece, turned {best[2]}°, {int((~ins).sum())} edge points tucked in")
+        report.append(f"{pid:12s} kept its shape: covers {cover * 100:.0f}% of the piece, turned {best[2]}°, {int((~ins).sum())} edge points eased in, folded {flips}/{len(tris)}")
         continue
     # place: same area and centre as the piece
     tri_area = lambda Q: 0.5 * np.abs((Q[:, 1, 0] - Q[:, 0, 0]) * (Q[:, 2, 1] - Q[:, 0, 1]) - (Q[:, 2, 0] - Q[:, 0, 0]) * (Q[:, 1, 1] - Q[:, 0, 1]))
@@ -215,11 +265,14 @@ for pn in panels:
     report.append(f"{pid:12s} 3D {pn['area3d_cm2']:6.0f} cm²  flat {Ai:6.0f}  piece {Ap:6.0f}  scale {s:4.2f}  outline {len(bloop)} pts  folded {flips}/{len(tris)}")
 print('\n'.join(report))
 
-# ---- pockets: inside the red outline on a front, the 3D surface belongs to the pocket piece -------------------
+# ---- pockets: the red outline on a front is marked on that piece; with a pocket piece in pairs.json, the 3D surface
+# inside the outline belongs to the pocket piece instead -------------------------------------------------------
 pockets = {}
 for front, pocket, side in pairs.get('pockets', []):
     poly = pocket_outline(pairs['pieces'][front]['traced'], side)
-    if not poly or pocket not in pieces: continue
+    if not poly: continue
+    if pocket not in pieces:  # no pocket piece: prints run over the pocket, its outline is only marked on the front
+        pockets[front] = {'outline': poly}; print('pocket outline', len(poly), 'pts on', front, '(marked only)'); continue
     src = np.array(poly, np.float32); dst = np.array(pieces[pocket]['poly'], np.float32)
     box = lambda Q: np.array([[Q[:, 0].min(), Q[:, 1].min()], [Q[:, 0].max(), Q[:, 1].min()], [Q[:, 0].max(), Q[:, 1].max()], [Q[:, 0].min(), Q[:, 1].max()]], np.float32)
     H = cv2.getPerspectiveTransform(box(src), box(dst))  # the pocket's box on the front → the pocket piece's box

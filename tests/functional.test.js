@@ -387,13 +387,17 @@ fs.mkdirSync(OUT, { recursive: true });
     await p.click('#modelGrid [data-g="hoodie"]'); await wait(1500);
     return n === 2 && nf === 2 && list && await ev(() => DM.doc.garment === 'hoodie' && DM.doc.items.length > 0) || `search=${n} fleece=${nf}`;  // Hoodie + Zip hoodie
   });
-  await t('Zip hoodie (real model): 14 pattern pieces, rib cuffs and waistband, prints reach the 3D model', async () => {
+  await t('Zip hoodie (real model): 12 pattern pieces, rib cuffs and waistband, pockets marked, zip in the fabric colour', async () => {
     const before = await ev(() => DM.doc.garment);
     await ev(() => DM.switchGarment('hoodie-zip'));
     await p.waitForFunction(() => DM.studio.garment?.id === 'hoodie-zip', null, { timeout: 120000 });
-    const info = await ev(() => ({ n: DM.garment.pieces.length, rib: DM.garment.pieces.filter(q => q.rib).map(q => q.id).sort().join(','), trims: !!DM.garment.trims?.zip, meshes: DM.studio.panelMeshes.length }));
+    // the zip takes the fabric colour unless one is chosen for it
+    await click('[data-tab="fabric"]'); await wait(300);
+    await p.fill('#tabFabric [data-k="fabric.color"][data-hex]', '#2b3a55'); await p.dispatchEvent('#tabFabric [data-k="fabric.color"][data-hex]', 'change'); await wait(400);
+    const info = await ev(() => ({ n: DM.garment.pieces.length, rib: DM.garment.pieces.filter(q => q.rib).map(q => q.id).sort().join(','), trims: !!DM.garment.trims?.zip, meshes: DM.studio.panelMeshes.length,
+      pocketMarks: DM.garment.pieces.filter(q => q.folds?.length).map(q => q.id).sort().join(','), zip: '#' + DM.studio.mats.zip.color.getHexString() }));
     await ev((g) => DM.switchGarment(g), before); await p.waitForFunction((g) => DM.studio.garment?.id === g, before, { timeout: 120000 });
-    return (info.n === 14 && info.rib === 'cuffL,cuffR,waistbandB,waistbandL,waistbandR' && info.trims && info.meshes > 0) || JSON.stringify(info);
+    return (info.n === 12 && info.rib === 'cuffL,cuffR,waistbandB,waistbandL,waistbandR' && info.trims && info.meshes > 0 && info.pocketMarks === 'frontL,frontR' && info.zip === '#2b3a55') || JSON.stringify(info);
   });
   await t('Switch to the real 3D shirt model and back', async () => {
     await click('#garmentBtn'); await p.click('#modelChips [data-mg="All"]'); await p.click('#modelGrid [data-g="shirt-ls"]'); await wait(8000);
@@ -491,6 +495,36 @@ fs.mkdirSync(OUT, { recursive: true });
   });
   await t('Theme toggle', async () => { await click('#themeBtn'); const d = await ev(() => document.documentElement.dataset.theme); await click('#themeBtn'); return !!d; });
   await t('Layout modes 1/2/3', async () => { await p.mouse.click(700, 500); for (const k of ['1', '3', '2']) { await p.keyboard.press(k); await wait(200); } return ev(() => document.querySelector('#work').classList.contains('mode-split')); });
+  /* ---------------- pattern cutter (app/cutter) ---------------- */
+  await t('Pattern cutter: seam loop, fill, mirror, brush, undo, export, load back', async () => {
+    const c = await ctx.newPage(); const e0 = errs.length;
+    c.on('pageerror', e => errs.push('CUTTER ' + e.message));
+    await c.goto('http://127.0.0.1:8765/app/cutter/', { waitUntil: 'load' });
+    await c.evaluate(() => localStorage.clear()); await c.reload({ waitUntil: 'load' });
+    await c.waitForFunction(() => window.CUTTER && CUTTER.M && CUTTER.LAB, null, { timeout: 120000 });
+    const box = await c.evaluate(() => { const r = document.querySelector('#gl').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; });
+    const at = (fx, fy) => [box[0] + box[2] * fx, box[1] + box[3] * fy];
+    for (const [fx, fy] of [[0.56, 0.42], [0.62, 0.42], [0.62, 0.5], [0.56, 0.5], [0.56, 0.42]]) { const [x, y] = at(fx, fy); await c.mouse.click(x, y); await c.waitForTimeout(250); }
+    const seams = await c.evaluate(() => CUTTER.S.seams.map(s => s.closed + ':' + s.pts.length).join(','));
+    await c.click('.piece[title="pocketL"]'); { const [x, y] = at(0.59, 0.46); await c.mouse.click(x, y); } await c.waitForTimeout(500);
+    await c.click('.piece[title="frontL"]'); { const [x, y] = at(0.68, 0.66); await c.mouse.click(x, y); } await c.waitForTimeout(500);
+    const area = await c.evaluate(() => { const a = {}; CUTTER.LAB.forEach((l, f) => { if (l >= 0) { const id = CUTTER.S.pieces[l].id; a[id] = (a[id] || 0) + CUTTER.M.A[f]; } }); return a; });
+    await c.click('[data-tool="brush"]'); await c.click('.piece[title="cords"]');
+    { const [x, y] = at(0.47, 0.3); await c.mouse.move(x, y); await c.mouse.down(); for (let i = 1; i <= 6; i++) await c.mouse.move(x, y + i * 12); await c.mouse.up(); }
+    await c.waitForTimeout(300);
+    const nStrokes = await c.evaluate(() => CUTTER.S.strokes.length);
+    await c.keyboard.press('Control+z'); const undone = await c.evaluate(() => CUTTER.S.strokes.length); await c.keyboard.press('Control+Shift+z');
+    const cut = await c.evaluate(() => CUTTER.exportCut());
+    // load it back after starting over
+    await c.evaluate(() => { CUTTER.S.seams = []; CUTTER.S.fills = []; CUTTER.S.strokes = []; CUTTER.compute(); });
+    await c.evaluate((J) => CUTTER.importCut(J), cut);
+    const back = await c.evaluate(() => CUTTER.S.seams.length + '/' + CUTTER.S.fills.length + '/' + CUTTER.S.strokes.length);
+    await c.screenshot({ path: OUT + '/cutter.png' }); await c.close();
+    const okArea = area.pocketL > 0.004 && area.pocketL < 0.012 && area.pocketR > 0.004 && area.frontL > 0.5;
+    const ok = seams === 'true:4,true:4' && okArea && nStrokes === 2 && undone === 0 && cut.format === 'design-master-cut' && cut.space === 'blender' && cut.seams.length === 2 && back === '2/' + cut.fills.length + '/2' && errs.length === e0;
+    return ok || JSON.stringify({ seams, area, nStrokes, undone, back });
+  });
+  await t('Pattern cutter is linked from the model picker', async () => ev(() => document.querySelector('#cutterLink')?.getAttribute('href') === 'cutter/'));
   await p.screenshot({ path: OUT + '/final.png' });
     console.log(`\n${results.filter(r => r.startsWith('PASS')).length}/${results.length} passed`);
   console.log('downloads:', downloads.join(', '));
