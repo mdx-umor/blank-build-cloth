@@ -225,6 +225,20 @@ fs.mkdirSync(OUT, { recursive: true });
   });
   await t('Units mm / in / cm change readouts and rulers', async () => { await click('.units [data-unit="mm"]'); const u1 = await ev(() => DM.unit()); await click('.units [data-unit="in"]'); const u2 = await ev(() => DM.unit()); await click('.units [data-unit="cm"]'); return u1 === 'mm' && u2 === 'in'; });
   await t('Zoom in / out / Fit and % readout', async () => { await click('#zoomIn'); const z1 = await ev(() => DM.editor.zoomPct()); await click('#zoomOut'); await click('#zoomOut'); await click('#zoomFit'); const z2 = await ev(() => DM.editor.zoomPct()); return z1 > 100 && z2 === 100 && (await ev(() => document.querySelector('#zoomPct').textContent)) === '100%'; });
+  await t('Trackpad swipe moves the sheet without zooming; wheel and pinch zoom', async () => {
+    const send = (evs) => ev(async (evs) => {
+      const cv = document.querySelector('#pat'), r = cv.getBoundingClientRect();
+      for (const e of evs) { cv.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, deltaX: e[0], deltaY: e[1], ctrlKey: !!e[2] })); await new Promise(res => setTimeout(res, 16)); }
+      await new Promise(res => setTimeout(res, 320));
+      return DM.editor.view.s;
+    }, evs);
+    const s0 = await ev(() => DM.editor.view.s);
+    const s1 = await send([[0, 2.5], [0.4, 8], [0, 20], [0, 45], [0, 70], [0, 100], [0, 90], [0, 60], [0, 30], [0, 10], [0, 3]]); // speeds up, then momentum
+    const s2 = await send([[0, 100], [0, 100]]); // mouse wheel notches
+    const s3 = await send([[0, -8, true], [0, -8, true]]); // pinch
+    await click('#zoomFit');
+    return (s1 === s0 && s2 < s1 && s3 > s2) || `swipe ${s0}→${s1}, wheel →${s2}, pinch →${s3}`;
+  });
   await t('Double-click empty sheet fits', async () => { await click('#zoomIn'); await click('#zoomIn'); await p.mouse.dblclick(120, 830); return ev(() => DM.editor.zoomPct() === 100); });
   await t('Right-drag moves the sheet', async () => { const o = await ev(() => DM.editor.view.ox); await p.mouse.move(300, 500); await p.mouse.down({ button: 'right' }); await p.mouse.move(360, 520, { steps: 4 }); await p.mouse.up({ button: 'right' }); return ev((o) => DM.editor.view.ox > o + 30, o); });
   await t('Hand tool', async () => { await click('[data-tool="hand"]'); const ok = await ev(() => DM.editor.tool === 'hand'); await click('[data-tool="select"]'); return ok; });

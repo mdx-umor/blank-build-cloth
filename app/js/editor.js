@@ -270,11 +270,22 @@ export class PatternEditor {
     if (d.moved || d.copied) { this.app.itemsChanged(false); this.app.commit(); }
     this.redraw();
   }
+  // Scroll wheel or pinch = zoom; two-finger swipe on a trackpad = move. A gesture (wheel events with no pause of
+  // 250 ms) is classified once, from its first event, and keeps that meaning to the end: a faster swipe or its
+  // momentum never flips into zooming half-way.
   wheel(e) {
     e.preventDefault();
-    const r = this.cv.getBoundingClientRect();
-    if (e.ctrlKey || e.metaKey || Math.abs(e.deltaY) > 40 && !e.shiftKey && Math.abs(e.deltaX) < 2) this.zoom(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018)), e.clientX - r.left, e.clientY - r.top);
-    else { this.view.ox -= e.deltaX; this.view.oy -= e.deltaY; this.redraw(); }
+    const r = this.cv.getBoundingClientRect(), now = performance.now();
+    const k = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1; // lines / pages → pixels
+    const dx = e.deltaX * k, dy = e.deltaY * k;
+    if (!this.wheelG || now - this.wheelG.t > 250) {
+      const mouse = e.deltaMode !== 0 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
+      this.wheelG = { mode: mouse && !e.shiftKey ? 'zoom' : 'pan' };
+    }
+    this.wheelG.t = now;
+    if (e.ctrlKey || e.metaKey) this.zoom(Math.exp(-dy * 0.01), e.clientX - r.left, e.clientY - r.top); // pinch, or Ctrl + wheel
+    else if (this.wheelG.mode === 'zoom') this.zoom(Math.exp(-dy * 0.0018), e.clientX - r.left, e.clientY - r.top);
+    else { const sx = e.shiftKey && !dx ? dy : dx, sy = e.shiftKey && !dx ? 0 : dy; this.view.ox -= sx; this.view.oy -= sy; this.redraw(); this.app.onZoom?.(); }
   }
   dbl(e) {
     const [x, y] = this.toSheet(e);
