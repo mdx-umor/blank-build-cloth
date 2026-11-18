@@ -329,18 +329,24 @@ fs.mkdirSync(OUT, { recursive: true });
     return rot && off;
   });
   await t('Backdrop on/off, shadow, colour, brightness, contrast', async () => {
-    await click('[data-k="scene.backdrop"] + span'); const off = await ev(() => DM.studio.wall.visible === false); await click('[data-k="scene.backdrop"] + span');
-    const sh0 = await ev(() => DM.studio.key.castShadow); await click('[data-k="scene.shadows"] + span'); const sh = await ev((a) => DM.studio.key.castShadow === !a, sh0); await click('[data-k="scene.shadows"] + span');
+    await click('[data-k="scene.backdrop"] + span'); const off = await ev(() => DM.studio.backdropOn === false); await click('[data-k="scene.backdrop"] + span');
+    const sh0 = await ev(() => DM.studio.shadowCatcher.visible); await click('[data-k="scene.shadows"] + span'); const sh = await ev((a) => DM.studio.shadowCatcher.visible === !a, sh0); await click('[data-k="scene.shadows"] + span');
     await p.click('#tabScene [data-setk="scene.bgColor"][data-val="#d3dccf"]');
     await p.fill('[data-k="scene.bgContrast"]', '1.4'); await p.dispatchEvent('[data-k="scene.bgContrast"]', 'change');
     return off && sh && await ev(() => DM.doc.scene.bgColor === '#d3dccf' && DM.doc.scene.bgContrast === 1.4);
   });
   await t('Backdrop light presets (everyday, Halloween, Christmas) + invert', async () => {
-    const ids = await ev(() => [...document.querySelectorAll('[data-k="scene.gobo"] option')].map(o => o.value));
+    const ids = await ev(() => [...document.querySelectorAll('[data-k="scene.gobo"] option')].map(o => o.value).filter(v => v !== 'custom'));
     const groups = await ev(() => [...document.querySelectorAll('[data-k="scene.gobo"] optgroup')].map(g => g.label));
     for (const id of ids) { await p.selectOption('[data-k="scene.gobo"]', id); await wait(60); }
     await p.selectOption('[data-k="scene.gobo"]', 'leaves'); await click('[data-k="scene.goboInvert"] + span'); await click('[data-k="scene.goboInvert"] + span');
-    return (ids.length >= 31 && groups.length === 2 && await ev(() => DM.doc.scene.gobo === 'leaves')) || `presets=${ids.length} groups=${groups}`;
+    return (ids.length >= 31 && groups.length >= 2 && await ev(() => DM.doc.scene.gobo === 'leaves')) || `presets=${ids.length} groups=${groups}`;
+  });
+  await t('Your own light picture on the backdrop', async () => {
+    await p.setInputFiles('#fileLight', OUT + '/test.png'); await wait(1500);
+    const ok = await ev(() => DM.doc.scene.gobo === 'custom' && !!DM.doc.scene.goboImage && !!DM.assets[DM.doc.scene.goboImage]);
+    await p.selectOption('[data-k="scene.gobo"]', 'leaves'); await wait(300);
+    return ok || 'custom light not set';
   });
   await t('Backdrop stays still while the garment is turned, zoomed and moved', async () => {
     // the backdrop near the top corners must look the same before and after (the garment never reaches there)

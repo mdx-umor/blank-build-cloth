@@ -28,105 +28,8 @@ async function pickVideoEncoder(width, height, fps) {
   return null;
 }
 
-// Backdrop light (a gobo in front of the key light), in the same order and groups as the original.
-export const GOBOS = [
-  { id: 'none', name: 'None' },
-  { id: 'window', name: 'Window' }, { id: 'beam', name: 'Beam' }, { id: 'blinds', name: 'Blinds' }, { id: 'softblinds', name: 'Soft blinds' },
-  { id: 'winblinds', name: 'Window blinds' }, { id: 'arch', name: 'Arched window' }, { id: 'winleaves', name: 'Window & leaves' },
-  { id: 'stripes', name: 'Light stripes' }, { id: 'leaves', name: 'Leaf shadows' }, { id: 'palm', name: 'Palm fronds' }, { id: 'fanpalm', name: 'Fan palm' },
-  { id: 'branches', name: 'Branches' }, { id: 'spot', name: 'Spotlight' }, { id: 'split', name: 'Light & shade' }, { id: 'round', name: 'Round window' },
-  { id: 'web', name: 'Spider web', group: '🎃 Halloween' }, { id: 'pumpkins', name: 'Pumpkins · glow', group: '🎃 Halloween' }, { id: 'bats', name: 'Bats', group: '🎃 Halloween' },
-  { id: 'bare', name: 'Bare branches', group: '🎃 Halloween' }, { id: 'gothic', name: 'Gothic windows', group: '🎃 Halloween' }, { id: 'jack', name: 'Jack-o’-lantern faces', group: '🎃 Halloween' },
-  { id: 'pinewin', name: 'Pine window', group: '🎄 Christmas' }, { id: 'frost', name: 'Frost on glass', group: '🎄 Christmas' }, { id: 'spruce', name: 'Dense spruce', group: '🎄 Christmas' },
-  { id: 'spruceframe', name: 'Spruce frame', group: '🎄 Christmas' }, { id: 'garland', name: 'Garland & fir', group: '🎄 Christmas' }, { id: 'archfrost', name: 'Arched window · frost', group: '🎄 Christmas' },
-  { id: 'roundfrost', name: 'Round window · frost', group: '🎄 Christmas' }, { id: 'leadfrost', name: 'Leaded window · frost', group: '🎄 Christmas' }, { id: 'winterforest', name: 'Winter forest', group: '🎄 Christmas' },
-];
-
-/* ---------- gobo textures (white = light, black = shadow; a few seasonal ones glow warm) ---------- */
-const goboCache = new Map();
-export function goboCanvas(id, invert = false) {
-  const key = id + invert;
-  if (goboCache.has(key)) return goboCache.get(key);
-  const S = 1024, cv = makeCanvas(S, S), c = cv.getContext('2d');
-  const r = mulberry(id.length * 97 + id.charCodeAt(0) * 13 + 3);
-  const W = '#fff', K = '#000';
-  c.fillStyle = K; c.fillRect(0, 0, S, S);
-  c.fillStyle = W; c.strokeStyle = W;
-  // Softness is applied once to the finished picture (blurring every leaf or needle on its own is very slow).
-  let soft = 0, frostLater = 0;
-  const blur = (px) => { soft = Math.max(soft, px || 0); };
-  const ink = (col) => { c.fillStyle = col; c.strokeStyle = col; };
-  // building blocks
-  const windowPanes = () => { for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) c.fillRect(250 + i * 270, 170 + j * 235, 245, 210); };
-  const arches = () => { for (const x of [230, 530]) { c.beginPath(); c.moveTo(x, 900); c.lineTo(x, 380); c.arc(x + 130, 380, 130, Math.PI, 0); c.lineTo(x + 260, 900); c.fill(); } };
-  const roundWin = () => { c.beginPath(); c.arc(S / 2, S / 2, 280, 0, Math.PI * 2); c.fill(); };
-  const leaf = (x, y, a, l, w) => { c.save(); c.translate(x, y); c.rotate(a); c.beginPath(); c.ellipse(0, 0, l, w, 0, 0, Math.PI * 2); c.fill(); c.restore(); };
-  const leavesOver = (n, sz = 1) => { for (let i = 0; i < n; i++) leaf(r() * S, r() * S, r() * Math.PI, (30 + r() * 40) * sz, (11 + r() * 12) * sz); };
-  const branch = (x, y, a, l, w, d, leaves) => { if (d > 7 || l < 8) { if (leaves) leaf(x, y, a, 16 + r() * 14, 7 + r() * 5); return; } const x2 = x + Math.cos(a) * l, y2 = y + Math.sin(a) * l; c.lineWidth = w; c.lineCap = 'round'; c.beginPath(); c.moveTo(x, y); c.lineTo(x2, y2); c.stroke(); if (leaves && d > 3) leaf(x2, y2, a + 1.2, 14 + r() * 10, 6 + r() * 4); branch(x2, y2, a - 0.3 - r() * 0.4, l * 0.72, w * 0.7, d + 1, leaves); branch(x2, y2, a + 0.3 + r() * 0.4, l * 0.7, w * 0.7, d + 1, leaves); };
-  const fir = (x, y, h, w) => { for (let k = 0; k < 6; k++) { const t = k / 6, yy = y - h * t, ww = w * (1 - t * 0.85); c.beginPath(); c.moveTo(x - ww / 2, yy); c.lineTo(x, yy - h * 0.32); c.lineTo(x + ww / 2, yy); c.closePath(); c.fill(); } c.fillRect(x - w * 0.05, y - 4, w * 0.1, h * 0.12); };
-  const bough = (x, y, a, l) => { // a fir bough: a stem with dense needles, thick enough to cast a clear shadow
-    c.lineCap = 'round'; c.lineWidth = 12; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke();
-    for (let k = 0; k < 48; k++) { const t = k / 48, px = x + Math.cos(a) * l * t, py = y + Math.sin(a) * l * t, L = 58 * (1 - t * 0.55);
-      for (const sgn of [-1, 1]) { c.lineWidth = 7; c.beginPath(); c.moveTo(px, py); c.lineTo(px + Math.cos(a + sgn * 0.7) * L, py + Math.sin(a + sgn * 0.7) * L); c.stroke(); } } };
-  const frost = (strength = 1) => { frostLater = strength; }; // drawn after the softening, so it stays crisp
-  const drawFrost = (strength) => { // feathery frost growing in from the edges of the glass
-    const n = makeCanvas(256, 256), x = n.getContext('2d'), im = x.createImageData(256, 256);
-    for (let py = 0; py < 256; py++) for (let px = 0; px < 256; px++) {
-      const e = Math.min(px, py, 255 - px, 255 - py) / 128, v = Math.abs(Math.sin(px * 0.21 + Math.sin(py * 0.13) * 4) * Math.cos(py * 0.17 + Math.sin(px * 0.11) * 3));
-      const a = Math.max(0, Math.min(1, (0.75 - e) * 1.6 + (v - 0.5) * 0.9 + (r() - 0.5) * 0.35)) * strength, i = (py * 256 + px) * 4;
-      im.data[i] = im.data[i + 1] = im.data[i + 2] = 0; im.data[i + 3] = a * 210;
-    }
-    x.putImageData(im, 0, 0); c.filter = 'blur(3px)'; c.drawImage(n, 0, 0, S, S); c.filter = 'none';
-  };
-  const lattice = (step, w) => { ink(K); c.lineWidth = w; for (let k = -S; k < S * 2; k += step) { c.beginPath(); c.moveTo(k, 0); c.lineTo(k + S, S); c.stroke(); c.beginPath(); c.moveTo(k, S); c.lineTo(k + S, 0); c.stroke(); } };
-  const bat = (x, y, s) => { c.save(); c.translate(x, y); c.scale(s, s); c.beginPath(); c.moveTo(0, -6); c.quadraticCurveTo(-12, -16, -34, -10); c.quadraticCurveTo(-28, -2, -30, 6); c.quadraticCurveTo(-20, 0, -14, 6); c.quadraticCurveTo(-8, 2, -4, 10); c.lineTo(0, 4); c.lineTo(4, 10); c.quadraticCurveTo(8, 2, 14, 6); c.quadraticCurveTo(20, 0, 30, 6); c.quadraticCurveTo(28, -2, 34, -10); c.quadraticCurveTo(12, -16, 0, -6); c.fill(); c.restore(); };
-  switch (id) {
-    case 'none': c.fillRect(0, 0, S, S); break;
-    case 'window': blur(10); windowPanes(); break;
-    case 'winblinds': blur(10); windowPanes(); blur(4); ink(K); for (let y = 170; y < 880; y += 34) c.fillRect(200, y, 650, 13); break;
-    case 'winleaves': blur(10); windowPanes(); ink(K); blur(9); leavesOver(45); break;
-    case 'arch': blur(12); arches(); blur(6); ink(K); c.fillRect(0, 600, S, 22); c.fillRect(352, 200, 16, 700); c.fillRect(652, 200, 16, 700); break;
-    case 'blinds': blur(5); for (let y = 0; y < S; y += 64) c.fillRect(0, y, S, 34); break;
-    case 'softblinds': blur(22); for (let y = 0; y < S; y += 92) c.fillRect(0, y, S, 46); break;
-    case 'stripes': blur(14); c.save(); c.translate(S / 2, S / 2); c.rotate(-0.6); for (let k = -3; k <= 3; k++) c.fillRect(k * 150 - 40, -S, 80, S * 2); c.restore(); break;
-    case 'leaves': c.fillRect(0, 0, S, S); ink(K); blur(5); leavesOver(320, 0.42); break;
-    case 'palm': { c.fillRect(0, 0, S, S); ink(K); blur(6); c.lineCap = 'round';
-      for (const [ox, oy, ang] of [[-60, 120, 0.35], [S + 40, 60, Math.PI - 0.5], [200, S + 60, -1.0], [S * 0.85, S + 40, -2.3]]) {
-        const L = 620; c.lineWidth = 12; c.beginPath(); c.moveTo(ox, oy);
-        const mid = (t) => [ox + Math.cos(ang) * L * t, oy + Math.sin(ang) * L * t + Math.sin(t * Math.PI) * 60];
-        for (let k = 1; k <= 20; k++) c.lineTo(...mid(k / 20)); c.stroke();
-        for (let k = 2; k < 26; k++) { const t = k / 26, [px, py] = mid(t), len = 170 * Math.sin(Math.PI * Math.min(1, t * 1.1)) + 20;
-          for (const sg of [-1, 1]) { const a2 = ang + sg * 0.62; c.lineWidth = 7 * (1 - t * 0.5); c.beginPath(); c.moveTo(px, py); c.quadraticCurveTo(px + Math.cos(a2) * len * 0.5, py + Math.sin(a2) * len * 0.5 + 12, px + Math.cos(a2) * len, py + Math.sin(a2) * len + 30); c.stroke(); } } }
-      break; }
-    case 'fanpalm': c.fillRect(0, 0, S, S); ink(K); blur(6); for (const [ox, oy, a0] of [[S * 0.15, S * 0.95, -1.9], [S * 0.9, S * 0.2, 2.2]]) { c.lineWidth = 10; c.beginPath(); c.moveTo(ox, oy); c.lineTo(ox + Math.cos(a0 + Math.PI) * 300, oy + Math.sin(a0 + Math.PI) * 300); c.stroke(); for (let k = 0; k < 22; k++) { const a = a0 - 1.25 + k * 0.12; c.beginPath(); c.moveTo(ox, oy); c.lineTo(ox + Math.cos(a - 0.03) * 520, oy + Math.sin(a - 0.03) * 520); c.lineTo(ox + Math.cos(a + 0.03) * 520, oy + Math.sin(a + 0.03) * 520); c.closePath(); c.fill(); } } break;
-    case 'branches': c.fillRect(0, 0, S, S); ink(K); blur(4); branch(S * 0.08, S, -1.15, 250, 20, 0, true); branch(S * 0.97, S * 0.08, 2.5, 230, 16, 0, true); break;
-    case 'bare': c.fillRect(0, 0, S, S); ink(K); blur(4); branch(S * 0.1, S, -1.2, 260, 22, 0, false); branch(S * 0.95, S * 0.1, 2.4, 220, 18, 0, false); break;
-    case 'split': blur(40); c.fillRect(0, 0, S * 0.55, S); break;
-    case 'spot': { const g = c.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S * 0.36); g.addColorStop(0, W); g.addColorStop(0.7, '#ddd'); g.addColorStop(1, K); c.fillStyle = g; c.fillRect(0, 0, S, S); break; }
-    case 'beam': blur(30); c.save(); c.translate(S / 2, S / 2); c.rotate(-0.5); c.fillRect(-150, -S, 300, S * 2); c.restore(); break;
-    case 'round': blur(10); roundWin(); blur(5); ink(K); c.fillRect(S / 2 - 9, 200, 18, 620); c.fillRect(200, S / 2 - 9, 620, 18); break;
-    case 'web': { c.fillRect(0, 0, S, S); ink(K); blur(2); const cx = S * 0.62, cy = S * 0.4, n = 14; c.lineWidth = 4; for (let k = 0; k < n; k++) { const a = k / n * Math.PI * 2; c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * 700, cy + Math.sin(a) * 700); c.stroke(); } c.lineWidth = 3; for (let ring = 30; ring < 650; ring *= 1.22) { c.beginPath(); for (let k = 0; k <= n; k++) { const a = k / n * Math.PI * 2, rr = ring * (0.92 + 0.08 * Math.sin(k * 2.3)); const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr; if (k) c.quadraticCurveTo(cx + Math.cos(a - Math.PI / n) * rr * 0.9, cy + Math.sin(a - Math.PI / n) * rr * 0.9, px, py); else c.moveTo(px, py); } c.stroke(); } break; }
-    case 'pumpkins': { blur(28); for (const [x, y, s2] of [[300, 640, 1], [640, 600, 1.25], [820, 760, 0.8], [470, 330, 0.7]]) { const g = c.createRadialGradient(x, y, 0, x, y, 190 * s2); g.addColorStop(0, '#ffd9a0'); g.addColorStop(0.55, '#f08a2a'); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.beginPath(); c.ellipse(x, y, 200 * s2, 160 * s2, 0, 0, Math.PI * 2); c.fill(); } break; }
-    case 'bats': c.fillRect(0, 0, S, S); ink(K); blur(3); for (let i = 0; i < 26; i++) bat(r() * S, r() * S * 0.8, 1.2 + r() * 2.2); break;
-    case 'gothic': blur(10); for (const x of [190, 430, 670]) { c.beginPath(); c.moveTo(x, 920); c.lineTo(x, 420); c.quadraticCurveTo(x, 230, x + 82, 160); c.quadraticCurveTo(x + 164, 230, x + 164, 420); c.lineTo(x + 164, 920); c.fill(); } blur(4); ink(K); for (const x of [190, 430, 670]) { c.fillRect(x + 76, 160, 12, 760); c.beginPath(); c.arc(x + 82, 360, 46, 0, Math.PI * 2); c.lineWidth = 10; c.stroke(); for (let y = 480; y < 900; y += 110) c.fillRect(x, y, 164, 9); } break;
-    case 'jack': { blur(10); for (const [x, y, s2] of [[300, 420, 1], [720, 600, 0.9]]) { ink('#ffb04a'); c.save(); c.translate(x, y); c.scale(s2, s2); for (const sg of [-1, 1]) { c.beginPath(); c.moveTo(sg * 90, -60); c.lineTo(sg * 30, -60); c.lineTo(sg * 60, -130); c.closePath(); c.fill(); } c.beginPath(); c.moveTo(-20, -10); c.lineTo(20, -10); c.lineTo(0, -45); c.closePath(); c.fill(); c.beginPath(); c.moveTo(-140, 30); for (let k = 0; k <= 8; k++) c.lineTo(-140 + k * 35, k % 2 ? 50 : 30); c.lineTo(140, 30); c.quadraticCurveTo(0, 170, -140, 30); c.fill(); c.restore(); } break; }
-    case 'pinewin': blur(10); windowPanes(); ink(K); blur(5); bough(-40, 120, 0.35, 620); bough(S + 40, 860, Math.PI + 0.25, 600); break;
-    case 'frost': c.fillRect(0, 0, S, S); frost(1.1); break;
-    case 'spruce': c.fillRect(0, 0, S, S); ink(K); blur(5); for (let i = 0; i < 16; i++) fir(r() * S, S * (0.72 + r() * 0.3), 300 + r() * 380, 180 + r() * 160); break;
-    case 'spruceframe': c.fillRect(0, 0, S, S); ink(K); blur(6); for (let i = 0; i < 9; i++) { bough(-30, i * 120, 0.15 + r() * 0.2, 220 + r() * 120); bough(S + 30, i * 120 + 60, Math.PI - 0.15 - r() * 0.2, 220 + r() * 120); bough(i * 120, -30, Math.PI / 2 - 0.2 + r() * 0.4, 160 + r() * 80); } break;
-    case 'garland': c.fillRect(0, 0, S, S); ink(K); blur(5); c.lineWidth = 10; c.beginPath(); c.moveTo(0, 120); c.quadraticCurveTo(S / 2, 330, S, 120); c.stroke(); for (let k = 0; k <= 40; k++) { const t = k / 40, x = t * S, y = 120 + 4 * 210 * t * (1 - t); bough(x, y, -Math.PI / 2 + (r() - 0.5) * 2.4, 70 + r() * 40); } for (let k = 1; k < 8; k++) { const t = k / 8, x = t * S, y = 120 + 4 * 210 * t * (1 - t); c.lineWidth = 3; c.beginPath(); c.moveTo(x, y); c.lineTo(x, y + 60 + (k % 3) * 30); c.stroke(); c.beginPath(); c.arc(x, y + 90 + (k % 3) * 30, 26, 0, Math.PI * 2); c.fill(); } break;
-    case 'archfrost': blur(12); arches(); blur(6); ink(K); c.fillRect(0, 600, S, 22); c.fillRect(352, 200, 16, 700); c.fillRect(652, 200, 16, 700); blur(0); frost(0.9); break;
-    case 'roundfrost': blur(10); roundWin(); blur(5); ink(K); c.fillRect(S / 2 - 9, 200, 18, 620); c.fillRect(200, S / 2 - 9, 620, 18); blur(0); frost(0.9); break;
-    case 'leadfrost': blur(8); c.fillRect(200, 150, 620, 740); blur(2); lattice(110, 7); blur(0); frost(0.8); break;
-    case 'winterforest': { const g = c.createLinearGradient(0, 0, 0, S); g.addColorStop(0, '#fff'); g.addColorStop(1, '#cfcfcf'); c.fillStyle = g; c.fillRect(0, 0, S, S); ink(K); blur(5); for (let i = 0; i < 9; i++) { const x = r() * S; c.fillRect(x, 0, 18 + r() * 26, S); } for (let i = 0; i < 7; i++) fir(r() * S, S + 40, 520 + r() * 300, 260 + r() * 160); break; }
-  }
-  c.filter = 'none'; c.globalCompositeOperation = 'source-over';
-  if (soft) { const t = makeCanvas(S, S); t.getContext('2d').drawImage(cv, 0, 0); c.fillStyle = K; c.fillRect(0, 0, S, S); c.filter = `blur(${soft}px)`; c.drawImage(t, 0, 0); c.filter = 'none'; }
-  if (frostLater) drawFrost(frostLater);
-  if (invert) { c.globalCompositeOperation = 'difference'; c.fillStyle = W; c.fillRect(0, 0, S, S); c.globalCompositeOperation = 'source-over'; }
-  goboCache.set(key, cv);
-  return cv;
-}
+export { GOBOS, goboCanvas } from './backdrop.js';
+import { composeBackdrop, shadowTone } from './backdrop.js';
 
 export class Studio {
   constructor(canvas) {
@@ -137,10 +40,6 @@ export class Studio {
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(28, 1, 1, 3000);
-    // The backdrop is shot by its own fixed studio camera (layer 1) and the garment by the camera you turn, zoom and
-    // move (layer 0): the wall, its light and the background stay exactly still on screen, like in a photo studio.
-    this.studioCam = new THREE.PerspectiveCamera(28, 1, 1, 3000); this.studioCam.layers.set(1);
-    this.studioCam.position.set(0, 4, 240); this.studioCam.lookAt(0, 0, 0);
     this.controls = new OrbitControls(this.camera, canvas);
     // The camera stays in front of the studio (zoom + pan only). Dragging turns the garment itself,
     // all the way round and tilted, while the backdrop and lights stay put — like a real photo studio.
@@ -156,12 +55,11 @@ export class Studio {
     this.turntable = new THREE.Group(); this.tilt.add(this.turntable);  // yaw (spin round)
     this.garmentRoot = new THREE.Group(); this.turntable.add(this.garmentRoot);
 
-    // backdrop wall + soft floor shadow catcher
-    this.wallMat = new THREE.MeshStandardMaterial({ color: 0xececec, roughness: 0.96 });
-    this.wall = new THREE.Mesh(new THREE.PlaneGeometry(900, 700), this.wallMat);
-    this.wall.position.z = -26; this.wall.receiveShadow = true; this.wall.layers.set(1); this.scene.add(this.wall);
-    this.shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(900, 700), new THREE.ShadowMaterial({ opacity: 0.25 }));
-    this.shadowCatcher.position.z = -26; this.shadowCatcher.receiveShadow = true; this.shadowCatcher.visible = false; this.shadowCatcher.layers.set(1); this.scene.add(this.shadowCatcher);
+    // The backdrop is a picture fixed on the screen behind the garment (see backdrop.js). The garment's own shadow
+    // falls on an invisible plane just behind it, so the shadow moves, turns and zooms with the garment.
+    this.backdropOn = true; this._bd = null;
+    this.shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1100), new THREE.ShadowMaterial({ opacity: 0.3, transparent: true }));
+    this.shadowCatcher.position.z = -26; this.shadowCatcher.receiveShadow = true; this.shadowCatcher.visible = false; this.scene.add(this.shadowCatcher);
 
     this.hemi = new THREE.HemisphereLight(0xffffff, 0xdcd6cf, 0.55); this.scene.add(this.hemi);
     this.key = new THREE.SpotLight(0xffffff, 1, 0, rad(32), 0.55, 0);
@@ -170,7 +68,6 @@ export class Studio {
     this.scene.add(this.key, this.key.target);
     this.fill = new THREE.DirectionalLight(0xffffff, 0.35); this.fill.position.set(200, 60, 300); this.scene.add(this.fill);
     this.rim = new THREE.DirectionalLight(0xfff4ea, 0.25); this.rim.position.set(-120, 200, -60); this.scene.add(this.rim);
-    for (const l of [this.hemi, this.key, this.fill, this.rim]) l.layers.enableAll(); // the lights light both the garment and the backdrop
 
     this.atlasTex = new THREE.CanvasTexture(makeCanvas(4, 4));
     this.atlasTex.colorSpace = THREE.SRGBColorSpace; this.atlasTex.anisotropy = r.capabilities.getMaxAnisotropy();
@@ -319,27 +216,24 @@ export class Studio {
     if (!keepAngle) this.camera.position.set(0, 4, dist);
     else this.camera.position.setLength(dist);
     this.controls.update();
-    this.studioCam.position.set(0, 4, dist); this.studioCam.lookAt(0, 0, 0); // the backdrop framing follows the garment's size only
     this.dirty = true;
   }
-  /** Draw one frame: the backdrop from the fixed studio camera, then the garment on top from `cam`. */
+  /** Draw one frame: the backdrop picture behind (fixed on screen), the garment from `cam`. */
   renderFrame(cam = this.camera) {
-    const r = this.renderer, sc = this.scene, s = this.studioCam, bg = sc.background;
-    s.aspect = cam.aspect;
-    if (cam.view?.enabled) { const v = cam.view; s.setViewOffset(v.fullWidth, v.fullHeight, v.offsetX, v.offsetY, v.width, v.height); }
-    else { s.clearViewOffset(); s.updateProjectionMatrix(); }
-    const auto = r.autoClear, shadowAuto = r.shadowMap.autoUpdate, scissor = r.getScissorTest();
-    // 1) shadow map with the garment in it (shadow maps only see objects on the drawing camera's layers):
-    //    a one-pixel pass with the garment camera, before the real frame
-    r.setScissorTest(true); r.setScissor(0, 0, 1, 1); r.render(sc, cam); r.setScissorTest(scissor);
-    r.shadowMap.autoUpdate = false;
-    r.autoClear = false; r.clear();
-    try {
-      r.render(sc, s);                     // 2) backdrop, its light and the background: fixed on screen
-      sc.background = null; r.clearDepth();
-      r.render(sc, cam);                   // 3) the garment, turned, zoomed and moved as you like
-    } finally { sc.background = bg; r.autoClear = auto; r.shadowMap.autoUpdate = shadowAuto; }
+    const sc = this.scene;
+    sc.background = this._noBackdrop ? null : this.backdropOn ? this._backdropTex(...(this._fixedSize || this._viewSize())) : this._plainBg;
+    this.renderer.render(sc, cam);
   }
+  _viewSize() { const p = this.canvas.parentElement, k = Math.min(2, window.devicePixelRatio || 1); return [Math.max(2, Math.round((p?.clientWidth || 2) * k)), Math.max(2, Math.round((p?.clientHeight || 2) * k))]; }
+  // the backdrop picture for a frame of w × h pixels (made again only when the size or the backdrop changes)
+  _backdropTex(w, h) {
+    const s = this.sc || {}, key = [w, h, s.bgColor, s.bgBright, s.bgContrast, s.gobo, !!s.goboInvert, this.customLightVersion || 0].join('|');
+    if (this._bd?.key === key) return this._bd.tex;
+    const tex = new THREE.CanvasTexture(composeBackdrop(w, h, s)); tex.colorSpace = THREE.SRGBColorSpace;
+    this._bd?.tex.dispose(); this._bd = { key, tex };
+    return tex;
+  }
+
 
   updateFabric(fabric, sheet) {
     this._fabric = fabric;
@@ -397,29 +291,24 @@ export class Studio {
 
   updateScene(sc) {
     this.sc = sc;
-    this.wall.visible = sc.backdrop !== false;
-    this.wallMat.color.set(sc.bgColor || '#ececec');
-    this.wallMat.color.multiplyScalar(sc.bgBright ?? 1);
-    this.renderer.setClearColor(sc.bgColor || '#ececec', sc.backdrop === false && sc.transparent ? 0 : 1);
-    this.scene.background = sc.backdrop === false ? new THREE.Color(sc.bgColor || '#ececec') : null;
+    this.backdropOn = sc.backdrop !== false;
+    this._plainBg = new THREE.Color(sc.bgColor || '#ececec').multiplyScalar(sc.bgBright ?? 1);
+    this.renderer.setClearColor(sc.bgColor || '#ececec', 1);
+    // the garment's shadow on the backdrop: a deeper tone of the backdrop colour, moving with the garment
+    this.shadowCatcher.visible = this.backdropOn && sc.shadows === true;
+    this.shadowCatcher.material.color.set(shadowTone(sc)); this.shadowCatcher.material.opacity = clamp(0.32 * (sc.bgContrast ?? 1), 0.08, 0.7);
     // key light on a sphere around the garment
     const side = rad(sc.lightSide ?? -35), up = rad(sc.lightHeight ?? 40), dist = 520;
     this.key.position.set(Math.sin(side) * Math.cos(up) * dist, Math.sin(up) * dist, Math.cos(side) * Math.cos(up) * dist);
     this.key.target.position.set(0, 0, -20);
-    const contrast = sc.bgContrast ?? 1; // backdrop contrast: stronger key light, weaker ambient
-    this.key.intensity = (sc.lightPower ?? 1) * 3.2 * contrast;
+    this.key.intensity = (sc.lightPower ?? 1) * 2.5; // (the backdrop light no longer dims the garment)
     this.key.decay = 0;
     this.key.penumbra = 0.6;
     this.key.angle = rad(26);
     this.key.shadow.radius = 2 + (sc.softness ?? 0.5) * 10;
     this.key.shadow.blurSamples = 16;
-    this.key.castShadow = sc.shadows !== false;
-    const gid = sc.gobo || 'none';
-    if (gid !== 'none') {
-      const key = gid + !!sc.goboInvert;
-      if (this._gobo !== key) { const t = new THREE.CanvasTexture(goboCanvas(gid, !!sc.goboInvert)); t.colorSpace = THREE.SRGBColorSpace; this.key.map = t; this._gobo = key; }
-      this.hemi.intensity = 0.42 * (sc.ambient ?? 1) / contrast;
-    } else { this.key.map = null; this._gobo = null; this.hemi.intensity = 0.55 * (sc.ambient ?? 1) / contrast; }
+    this.key.castShadow = true; // the garment shades itself; the backdrop light falls on the backdrop only
+    this.hemi.intensity = 0.55 * (sc.ambient ?? 1);
     const useHdr = sc.hdri !== false && this.hdrTex;
     this.scene.environment = useHdr ? this.hdrTex : this.envTex;
     this.scene.environmentIntensity = useHdr ? (sc.hdriPower ?? 1) * 0.6 : (sc.envPower ?? 0.55);
@@ -485,8 +374,8 @@ export class Studio {
     this._rotating = () => !!rot;
   }
 
-  // The wall stays put. It is set once per garment, just behind the furthest the garment reaches when turned
-  // (the garment is drawn in its own pass, so it can never cut through the wall anyway).
+  // The plane that catches the garment's shadow sits just behind the furthest the garment reaches when turned
+  // (set once per garment).
   _fitWall() {
     if (this._wallFor === this.garment) return;
     this._wallFor = this.garment;
@@ -496,7 +385,7 @@ export class Studio {
     this.turntable.rotation.y = yaw; this.tilt.rotation.x = pitch; this.tilt.updateMatrixWorld(true);
     const reach = box.isEmpty() ? 22 : Math.max(Math.abs(box.min.x), Math.abs(box.max.x), Math.abs(box.min.z), Math.abs(box.max.z));
     const z = -Math.max(26, reach + 4);
-    this.wall.position.z = z; this.shadowCatcher.position.z = z;
+    this.shadowCatcher.position.z = z;
   }
 
   resize() {
@@ -504,7 +393,6 @@ export class Studio {
     const p = this.canvas.parentElement; if (!p) return;
     const w = p.clientWidth, h = p.clientHeight; if (!w || !h) return;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
-    this.studioCam.aspect = w / h; this.studioCam.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.applyPixelRatio();
     this.dirty = true;
@@ -659,7 +547,7 @@ export class Studio {
     this.paused = true; this.recording = true;
     const prev = { pr: r.getPixelRatio(), yaw: this.viewYaw };
     try {
-      r.setPixelRatio(1); r.setSize(width, height, false);
+      r.setPixelRatio(1); r.setSize(width, height, false); this._fixedSize = [width, height];
       this.camera.aspect = width / height; this.camera.updateProjectionMatrix();
       const total = Math.round(seconds * fps), base = this.viewYaw;
       this.tilt.rotation.x = 0; // turntable videos are shot upright
@@ -688,7 +576,7 @@ export class Studio {
       return { blob: new Blob([target.buffer], { type: enc.format === 'mp4' ? 'video/mp4' : 'video/webm' }), format: enc.format };
     } finally {
       this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw; this.tilt.rotation.x = this.viewPitch; this._fitWall();
-      r.setPixelRatio(prev.pr); this.recording = false; this.resize();
+      this._fixedSize = null; r.setPixelRatio(prev.pr); this.recording = false; this.resize();
       this.paused = false; this.dirty = true;
     }
   }
@@ -720,11 +608,12 @@ export class Studio {
     const sc = Math.min(1, maxDim / Math.max(width, height));
     const W = Math.round(width * sc), H = Math.round(height * sc);
     this.paused = true;
-    const prev = { pr: r.getPixelRatio(), w: this.canvas.clientWidth, h: this.canvas.clientHeight, aspect: this.camera.aspect, yaw: this.viewYaw, keyPos: this.key.position.clone(), clear: r.getClearAlpha(), clearC: r.getClearColor(new THREE.Color()), bg: this.scene.background, wall: this.wall.visible, catcher: this.shadowCatcher.visible, map: this.key.shadow.mapSize.x };
+    const prev = { pr: r.getPixelRatio(), w: this.canvas.clientWidth, h: this.canvas.clientHeight, aspect: this.camera.aspect, yaw: this.viewYaw, keyPos: this.key.position.clone(), clear: r.getClearAlpha(), clearC: r.getClearColor(new THREE.Color()), catcher: this.shadowCatcher.visible, map: this.key.shadow.mapSize.x };
     try {
       if (view) { this.viewYaw = { front: 0, back: Math.PI, side: Math.PI / 2, three: -Math.PI / 5 }[view] ?? this.viewYaw; this.turntable.rotation.y = this.viewYaw; this.tilt.rotation.x = 0; }
       this._fitWall();
-      if (transparent) { this.wall.visible = false; this.scene.background = null; r.setClearColor(0x000000, 0); this.shadowCatcher.visible = keepShadow; }
+      this._fixedSize = [W, H];
+      if (transparent) { this._noBackdrop = true; r.setClearColor(0x000000, 0); this.shadowCatcher.visible = keepShadow; }
       this.key.shadow.mapSize.set(4096, 4096); this.key.shadow.map?.dispose(); this.key.shadow.map = null;
       r.setPixelRatio(1); r.setSize(W, H, false);
       this.camera.aspect = W / H; this.camera.updateProjectionMatrix();
@@ -761,7 +650,7 @@ export class Studio {
       return out;
     } finally {
       this.key.position.copy(prev.keyPos);
-      this.wall.visible = prev.wall; this.shadowCatcher.visible = prev.catcher; this.scene.background = prev.bg;
+      this._noBackdrop = false; this._fixedSize = null; this.shadowCatcher.visible = prev.catcher;
       r.setClearColor(prev.clearC, prev.clear);
       this.key.shadow.mapSize.set(prev.map, prev.map); this.key.shadow.map?.dispose(); this.key.shadow.map = null;
       this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw; this.tilt.rotation.x = this.viewPitch; this._fitWall();

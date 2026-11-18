@@ -8,7 +8,8 @@ import { uid, clamp, download, readFileAsDataURL, readFileAsText, loadImage, mak
 import * as store from './store.js';
 import { readPicture, sniff, ImportError } from './importer.js';
 import { initHalftone, openHalftone, setShirtColour } from './halftone.js';
-const usedAssets = (doc) => new Set(doc.items.flatMap(i => [i.asset, i.vec?.asset]).filter(Boolean));
+import { setCustomLight } from './backdrop.js';
+const usedAssets = (doc) => new Set([...doc.items.flatMap(i => [i.asset, i.vec?.asset]), doc.scene?.goboImage].filter(Boolean));
 import { initExports, runExport, openRender, snapshot3D, isBusyRendering } from './exports.js';
 import { initPanels, saveToFiles, openFiles, toggleModels, startTour } from './panels.js';
 
@@ -589,7 +590,19 @@ function renderFabric() {
 const defaultsSec = () => sec('Default settings', `<div class="row3"><button class="btn sm" data-act="lookReset" title="Reset to saved defaults">Reset to saved</button><button class="btn sm" data-act="lookSave" title="Save the current fabric and scene as the default for new designs">Save as default</button><button class="btn sm" data-act="lookFactory" title="Restore factory settings">Factory</button></div>`);
 
 /* ---------- Scene tab ---------- */
+// "Your own light picture": any image becomes the backdrop light (its brightness), tinted by the backdrop colour
+let lightShown = null;
+async function syncCustomLight() {
+  const id = app.doc.scene.goboImage || null;
+  if (id === lightShown) return;
+  lightShown = id;
+  const img = id && app.assets[id] ? await loadImage(app.assets[id]).catch(() => null) : null;
+  setCustomLight(img);
+  studio.customLightVersion = (studio.customLightVersion || 0) + 1; studio.dirty = true;
+  goboThumbs.custom = null; if (!$('#tabScene').hidden) renderScene();
+}
 function renderScene() {
+  syncCustomLight();
   const s = app.doc.scene, d = app.doc.details, g = app.garment;
   let html = sec('Backdrop', `
     ${toggleRow('scene.hdri', 'Studio HDRI', true)}
@@ -598,6 +611,7 @@ function renderScene() {
     ${toggleRow('scene.shadows', 'Shadow on the backdrop', true)}
     ${swatchRow('scene.bgColor', BG_SWATCHES, 'Backdrop colour')}
     <div class="row"><label>Backdrop light</label><div class="ctl gobo-pick"><img src="${goboThumb(s.gobo || 'none')}" alt="" title="${esc(GOBOS.find(gb => gb.id === (s.gobo || 'none'))?.name || '')}"><select data-k="scene.gobo" aria-label="Backdrop light">${goboOptions(s.gobo || 'none')}</select></div></div>
+    ${s.gobo === 'custom' ? `<button class="btn sm block" data-act="lightPick">${s.goboImage ? 'Choose another picture…' : 'Choose a picture…'}</button><div class="hintline">Any picture works: its light and dark parts become the light on the backdrop, in your backdrop colour.</div>` : ''}
     ${toggleRow('scene.goboInvert', 'Invert light')}
     ${slider('scene.bgBright', 'Backdrop brightness', 0.5, 1.5, 0.01)}
     ${slider('scene.bgContrast', 'Backdrop contrast', 0.5, 1.6, 0.01)}`);
@@ -631,7 +645,7 @@ function goboOptions(cur) {
   return html + (group ? '</optgroup>' : '');
 }
 const goboThumbs = {};
-function goboThumb(id) { if (goboThumbs[id]) return goboThumbs[id]; const s = goboCanvas(id), t = makeCanvas(96, 96); t.getContext('2d').drawImage(s, 0, 0, 96, 96); return (goboThumbs[id] = t.toDataURL()); }
+function goboThumb(id) { if (goboThumbs[id] && id !== 'custom') return goboThumbs[id]; const s = goboCanvas(id), t = makeCanvas(96, 96); t.getContext('2d').drawImage(s, 0, 0, 96, 96); return (goboThumbs[id] = t.toDataURL()); }
 
 function renderAll() { renderDesign(); renderFabric(); renderScene(); }
 function switchTab(t) { $$('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); $('#tabDesign').hidden = t !== 'design'; $('#tabFabric').hidden = t !== 'fabric'; $('#tabScene').hidden = t !== 'scene'; }
@@ -673,6 +687,7 @@ function onValue(path, live) {
     if (key === 'hanger') rebuildGeometrySoon();
     if (key === 'spin') studio.applyPixelRatio();
     if (!live && ['bgColor', 'gobo', 'hdri', 'hangerColor'].includes(key)) renderScene();
+    if (!live && key === 'gobo' && app.doc.scene.gobo === 'custom' && !app.doc.scene.goboImage) $('#fileLight').click();
     syncChrome();
   } else if (scope === 'view') { editor.redraw(); if (!live) { renderDesign(); syncChrome(); } }
 }
@@ -776,6 +791,7 @@ function bindInspector() {
       case 'rotL': it.rot = ((it.rot || 0) - 90 + 540) % 360 - 180; break;
       case 'rotR': it.rot = ((it.rot || 0) + 90 + 540) % 360 - 180; break;
       case 'flip': for (const s of sel) s.flip = !s.flip; b.classList.toggle('on'); break;
+      case 'lightPick': $('#fileLight').click(); return;
       case 'shapeSwap': { const it = app.selected(); if (it) { const c = it.color; it.color = it.color2 || '#ffffff'; it.color2 = c; app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); } return; }
       case 'bold': it.weight = it.weight >= 700 ? 400 : 700; { const f = FONTS.find(f => f.family === it.font); if (f && !f.weights.includes(it.weight)) it.weight = f.weights.reduce((a, w) => Math.abs(w - it.weight) < Math.abs(a - it.weight) ? w : a, f.weights[0]); } app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
       case 'invert': it.invert = !it.invert; b.classList.toggle('on'); app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
@@ -910,6 +926,14 @@ function bindFiles() {
       return;
     }
     for (const f of files) await addImageFile(f);
+  });
+  const fl = $('#fileLight');
+  fl.addEventListener('change', async () => {
+    const f = fl.files[0]; fl.value = ''; if (!f) return;
+    const src = await readFileAsDataURL(f), id = uid('l'); app.assets[id] = src;
+    app.doc.scene.goboImage = id; app.doc.scene.gobo = 'custom';
+    await syncCustomLight(); studio.updateScene(app.doc.scene); renderScene(); commit();
+    toast('Your light picture is on the backdrop.');
   });
   const fp = $('#fileProject');
   fp.addEventListener('change', () => { const f = fp.files[0]; fp.value = ''; if (f) openProjectFile(f); });
