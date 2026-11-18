@@ -349,8 +349,8 @@ fs.mkdirSync(OUT, { recursive: true });
     return ok || 'custom light not set';
   });
   await t('Backdrop stays still while the garment is turned, zoomed and moved', async () => {
-    // the backdrop near the top corners must look the same before and after (the garment never reaches there)
-    const shot = () => ev(() => { DM.studio.renderFrame(); const src = DM.studio.renderer.domElement, c = document.createElement('canvas'); c.width = 40; c.height = 40; const x = c.getContext('2d'); const out = []; for (const [fx, fy] of [[0.03, 0.03], [0.97, 0.03], [0.03, 0.2], [0.97, 0.2]]) { x.drawImage(src, src.width * fx - 20, src.height * fy - 20, 40, 40, 0, 0, 40, 40); const d = x.getImageData(0, 0, 40, 40).data; let r = 0, g = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; } out.push([r, g, b].map(v => Math.round(v / 1600))); } return out; });
+    // the backdrop itself (garment and its shadow hidden for the comparison) must look the same before and after
+    const shot = () => ev(() => { const st = DM.studio, vis = [st.turntable.visible, st.shadowCatcher.visible]; st.turntable.visible = false; st.shadowCatcher.visible = false; st.renderFrame(); [st.turntable.visible, st.shadowCatcher.visible] = vis; const src = st.renderer.domElement, c = document.createElement('canvas'); c.width = 40; c.height = 40; const x = c.getContext('2d'); const out = []; for (const [fx, fy] of [[0.03, 0.03], [0.97, 0.03], [0.03, 0.2], [0.97, 0.2]]) { x.drawImage(src, src.width * fx - 20, src.height * fy - 20, 40, 40, 0, 0, 40, 40); const d = x.getImageData(0, 0, 40, 40).data; let r = 0, g = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; } out.push([r, g, b].map(v => Math.round(v / 1600))); } return out; });
     const a = await shot();
     await ev(() => { const st = DM.studio, t = st.controls.target, cam = st.camera; st.viewYaw = st.targetYaw = 1.1; st.turntable.rotation.y = 1.1; cam.position.sub(t).setLength(cam.position.distanceTo(t) * 0.55).add(t); cam.position.x += 18; t.x += 18; st.controls.update(); });
     const b = await shot();
