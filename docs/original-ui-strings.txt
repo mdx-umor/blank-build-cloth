@@ -1,0 +1,357 @@
+appName: BlankBuilder
+tagline: pattern → 3D · model: T-shirt
+save: Save project
+open: Open project
+export: Export pattern PNG
+shot: 3D snapshot
+pattern: Sewing pattern
+fitting: 3D fitting
+undo: ↶ Undo
+redo: ↷ Redo
+hintMat: Scroll — zoom · right drag or Space — move · double-click — fit · Ctrl — no snapping · Alt+drag or Ctrl+D — copy · Ctrl+Z — undo
+hintView: Left drag — rotate · right drag — move · scroll — zoom · double-click — recentre
+drop: Drop to place it on the pattern
+vFront: Front
+vBack: Back
+vSide: Side
+hAdd: Add
+image: Image
+text: Text
+hintAdd: You can drag a PNG/JPG/SVG straight onto the pattern. Anything past the edge of a piece is trimmed, just like cut-and-sew printing.
+hColor: Fabric colour
+hSel: Selected item
+font: Font
+textColor: Text colour
+width: Width
+rotL: Rotate 90° left
+rotR: Rotate 90° right
+rotHint: Or drag outside a corner
+rotation: Rotation
+opacity: Opacity
+flip: Mirror
+dup: Copy
+up: Forward
+down: Backward
+del: Delete
+hPlace: Place at
+knitSize: Knit size
+hLayers: Layers
+hView: View
+marks: Pattern markings
+spin: Auto-rotate 3D
+hanger: Hanger
+hangerColor: Hanger colour
+sideOut: Outside
+sideIn: Inside
+kIn: inside
+insideTag: INSIDE · as seen from inside the shirt
+titleOut1: OUTSIDE
+titleOut2: outside of the shirt — what shows when it is worn
+titleIn1: INSIDE
+titleIn2: inside of the shirt — label, hem facings and the back print
+labelToggle: Neck label
+studio: Studio backdrop
+bgColor: Backdrop colour
+gobo: Window light on the backdrop
+goboLabel: Backdrop light
+goboInv: Invert light
+bgBright: Backdrop brightness
+bgContrast: Backdrop contrast
+goboNone: none
+goboWindow: window
+goboBeam: beam
+ao: Fold shadows (AO)
+bright: Brightness
+contrast: Contrast
+relief: Texture
+wrinkles: Wrinkles
+wrinklesOn: Fabric wrinkles
+hideLayer: Hide layer
+showLayer: Show layer
+hLight: Key light
+lSide: Side
+lTop: Height
+lPow: Power
+scale: Sewing pattern · 1 cm = {n} px
+cm: cm
+mmU: mm
+inch: in
+unitsT: Units: millimetres, centimetres or inches
+pieceInfo: {w} × {h} {u} · cut 1
+fromCorner: {x} × {y} {u} from corner
+empty: Nothing here yet — add an image or text.
+kText: text
+kImg: image
+picture: image
+newText: Text
+hdriPow: HDRI intensity
+rNote1: The render traces real light, so the picture is cleaner, more realistic and larger than a 3D snapshot. It is the best choice for photos for your website and catalogue.
+rNote2: It runs on your graphics card, so the speed depends on it: seconds on a powerful card, a few minutes on a laptop.
+hdriRot: HDRI rotation
+hdri: Studio HDRI
+pickHint: Click a colour anywhere in the window · Esc to cancel
+goboBlinds: blinds
+goboArch: arched window
+goboLeaves: leaf shadows
+goboBlindSoft: soft blinds
+goboBlindWin: window blinds
+goboPalm: palm fronds
+goboFanPalm: fan palm
+goboBranch: branches
+goboWinLeaves: window & leaves
+goboStripes: light stripes
+goboSpot: spotlight
+goboSplit: light & shade
+invert: Invert
+eyedropper: Eyedropper: pick a colour from the screen
+labelType: Label shape
+labelColor: Label colour
+labelAsFabric: Same as the shirt
+label_woven: Small woven
+label_wide: Wide
+label_square: Square
+label_satin: Tall satin
+label_loop: Loop fold
+fontWeight: Font weight
+w100: Thin
+w200: Extra light
+w300: Light
+w400: Regular
+w500: Medium
+w600: Semibold
+w700: Bold
+w800: Extra bold
+w900: Black
+tStyle: Style
+tBold: Bold
+tItalic: Italic
+tCaps: ALL CAPS
+dragLayer: Drag to change the layer order
+themeT: Day / night mode
+modeGroup: View
+modePattern: Sewing pattern
+modeSplit: Split
+mode3d: 3D
+undoT: Undo (Ctrl+Z)
+redoT: Redo (Ctrl+Shift+Z)
+exportBtn: Export
+exportMore: More exports
+patternTitle: Sewing pattern
+nPieces: {n} pieces
+toolsLabel: Tools
+toolSelect: Select
+toolHand: Hand — move the sheet
+toolShapes: Shapes
+zoomIn: Zoom in
+zoomOut: Zoom out
+fit: Fit
+preview3d: 3D Preview
+livePreview: Live preview
+resetView: Reset view
+qualityAria: 3D preview quality
+qualityTip: 3D preview quality. Renders, videos and snapshots are always made at full quality.
+qAdaptive: Adaptive
+qAdaptiveSub: Lighter while it turns, sharp when it stops
+qFull: Full
+qFullSub: Always sharp
+qHalf: Half
+qHalfSub: Faster on slower computers
+qQuarter: Quarter
+qQuarterSub: Fastest, with a softer picture
+tabDesign: Design
+tabScene: Scene
+hArtwork: Artwork
+artworkHint: Add an image or text
+nSel: {n} designs selected
+hTransform: Transform
+alignPiece: Align to the piece
+plL: Align to the piece’s left edge
+plC: Centre on the piece
+plR: Align to the piece’s right edge
+plT: Align to the piece’s top
+plM: Middle of the piece
+plB: Align to the piece’s bottom
+hFabric: Fabric
+hAppearance: Appearance
+tourBtn: Quick tour
+tourSkip: Skip tour
+tourBack: Back
+tourNext: Next
+tourDone: Done
+tourOf: {n} of {m}
+tour1T: Add your artwork
+tour1X: Upload an image or type text. It lands on the pattern, ready to place. Tip: copy a picture anywhere and paste it here with Ctrl+V.
+tour2T: Place it on the pattern
+tour2X: Drag, scale and rotate your design right on the cut pieces. Outside or inside: print anywhere.
+tour3T: Check it in 3D
+tour3X: Drag to turn the garment, scroll to zoom. Every change shows up live.
+tourQT: Adjust the 3D quality
+tourQX: Adaptive keeps the 3D smooth on any computer: lighter while it turns, sharp as soon as it stops. You can also pick Full, Half or Quarter here. Renders and exports are always full quality.
+tour4T: Switch the model
+tour4X: T-shirts, polos and hoodies: flat, draped or on a body. Your design comes along.
+tour5T: Export your work
+tour5X: Download 3D snapshots, photoreal studio renders, print files and a spec sheet of your design.
+hint3dTitle: It's 3D — move it
+hint3dText: Drag to rotate · scroll to zoom
+hint3dOff: Don't show again
+hBackdrop: Backdrop
+wallShadow: Shadow on the backdrop
+hangerShow: Show hanger
+hDetails: Details
+garments: Garments
+garmentLoading: Loading the garment…
+garmentFail: Could not load the garment
+openFail: Could not open the project file
+hLook: View presets
+lookSave: Save as default
+lookHead: Default settings
+lookReset: Reset to saved defaults
+lookFactory: Restore factory settings
+lookSaved: Current look saved as default
+lookRestored: Look reset to default
+lookFactoryDone: Factory look restored
+para: Paragraph
+alignL: Align left
+alignC: Centre
+alignR: Align right
+lineH: Line height
+letterSp: Letter spacing
+render: Catalogue render
+rTitle: Catalogue render
+rClose: Close
+rSize: Image size
+rQuality: Quality
+rqDraft: Draft · 150 passes
+rqGood: Good · 500 passes
+rqHigh: High · 1000 passes
+rqBest: Maximum · 1500 passes
+rTransparent: Transparent background (studio light kept)
+rHint: Framing, backdrop, backdrop light and shadow are taken from the 3D view as they are — the render recomputes real light on the shirt itself. More passes give a cleaner image.
+rStart: Start render
+rStop: Stop
+rSave: Save PNG
+rSaveWebp: Save WebP
+rSaveWebpNote: (compact, for your web catalogue)
+rSavePngNote: (full quality)
+rReco: Recommended for catalogue
+rRecoQ: Good
+rRecoOn: selected
+rEncoding: Saving WebP…
+rIdle: Press “Start render”.
+rPreparing: Preparing the scene…
+rFailed: The render could not start:
+rProgress: Pass {n} of {t} · {s}
+rDone: Done in {s} s. Ready to save.
+rStopped: Stopped at pass {n}. You can save it as is.
+rLost: Your graphics card dropped the render at pass {n}, so there is nothing to save. Try again, with a smaller size or lower quality.
+hintShape: Press on the pattern and drag to draw the shape. Shift keeps it even. Esc cancels.
+shape: Shape
+shapeColor: Shape colour
+outline: Outline only
+thick: Thickness, mm
+height: Height
+kShape: shape
+rNoteShort: Real light. The cleanest, most realistic picture for your website and catalogue.
+rHintShort: The backdrop and shadow come from the 3D view. The render recalculates real light on the shirt. More passes give a cleaner picture, but the render takes longer.
+rInfo: More about this
+rNote2Site: Cloud renders run on the graphics cards of our servers, so any computer or phone will do. On Pro and Ultra you can also render on this computer for free.
+rcBtn: Render in cloud
+rStartLocal: Render on this computer
+rcLeft: {n} of {l} cloud renders left this month
+rcLeftUnl: Cloud renders: unlimited
+rcExtra:  · +{n} extra
+rcIdle: Press “Render in cloud”.
+rcSaving: Saving your project…
+rcSending: Sending it to our servers…
+rcQueued: Starting a graphics card… · {s}
+rcRendering: Rendering… · {s}
+rcDownloading: Downloading the picture…
+rcDone: Done in {s}. Ready to save.
+rcReady: Your cloud render is ready.
+rcFailed: The cloud render did not work. It does not count towards your limit. Please try again.
+rcTimeout: This is taking longer than usual, so we stopped waiting. Please try again in a few minutes. A render that fails does not count towards your limit.
+rcOffline: Could not reach our servers. Check your connection and try again.
+rcBusy: You already have 2 cloud renders running. Wait for one to finish, then try again.
+rcUnavailable: Cloud rendering is not available right now. Nothing was counted. Please try again later.
+rcTooLarge: This project is too large to send to our servers. Try with fewer or smaller images.
+rcStopped: Stopped. This render does not count towards your limit.
+rcEta: Usually about {a}–{b} min (the first render of the day can take a little longer). You can close this window: we will let you know when it is ready.
+rcOpen: Open
+rcBadgeBusy: Cloud render in progress
+rcNotifyBody: Open BlankBuilder to save it.
+rcStoring: Saving the picture…
+rcWaitLong: Waiting for a free graphics card · {s}. At busy times it can take up to 2–3 minutes.
+rcDoneDevice: Done in {s}. This render is only on this device: save it now, it is not kept in your account.
+rpBasic: Basic renders in the cloud at Good quality, up to {px} px. Pro adds bigger sizes, every quality and free renders on this computer.
+rpPro: Pro renders up to {px} px. 4K sizes come with Ultra.
+rpFree: Look around: turn the frame and try every setting. Rendering starts with Basic.
+rpSee: See plans
+shape_rect: Rectangle
+shape_line: Line
+toolDashLine: Dashed line
+dashed: Dashed
+shape_square: Square
+shape_circle: Circle
+shape_triangle: Triangle
+shape_star: Star
+shape_diamond: Diamond
+saved: Saved: 
+swatch: Colour 
+customColor: Custom colour
+example: example: badge
+front: FRONT
+back: BACK
+sleeveR: RIGHT SLEEVE
+sleeveL: LEFT SLEEVE
+neckF: NECK RIB · front
+collar: COLLAR
+hoodR: Hood · right
+hoodL: Hood · left
+pocket: Pocket
+hemRibF: WAISTBAND · front
+hemRibB: WAISTBAND · back
+placket: PLACKET
+buttons: Buttons
+cuffRibR: RIGHT SLEEVE RIB CUFF
+cuffRibL: LEFT SLEEVE RIB CUFF
+panelL: Mesh panel · left
+panelR: Mesh panel · right
+neck: NECK BAND
+shoulderR: Shoulder · right
+shoulderL: Shoulder · left
+namePlate: Name patch
+frontR: FRONT · right
+frontL: FRONT · left
+stand: COLLAR STAND
+palmR: Palm · right
+backR: Back of hand · right
+thumbAR: Thumb · right, palm side
+thumbBR: Thumb · right, back side
+lensmiR: Fourchette · right, index–middle
+lensrmR: Fourchette · right, middle–ring
+lensprR: Fourchette · right, ring–little
+palmL: Palm · left
+backL: Back of hand · left
+thumbAL: Thumb · left, palm side
+thumbBL: Thumb · left, back side
+lensmiL: Fourchette · left, index–middle
+lensrmL: Fourchette · left, middle–ring
+lensprL: Fourchette · left, ring–little
+thighL: Thigh · left
+thighR: Thigh · right
+shinL: Shin · left
+shinR: Shin · right
+seatL: Back panel · left
+seatR: Back panel · right
+sideL: Side strip · left
+sideR: Side strip · right
+yoke: Back yoke
+waistband: WAISTBAND
+neckFR: NECK RIB · right
+neckFL: NECK RIB · left
+neckB: NECK RIB · back
+hemF: HEM FACING · front
+hemB: HEM FACING · back
+cuffR: RIGHT SLEEVE HEM FACING
+cuffL: LEFT SLEEVE HEM FACING
+label: LABEL
