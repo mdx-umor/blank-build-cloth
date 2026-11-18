@@ -1,0 +1,4 @@
+[submodule "tools/craft-anything"]
+	path = tools/craft-anything
+	url = https://github.com/umor1234/craft-anything
+	shallow = true
