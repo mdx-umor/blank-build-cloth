@@ -127,7 +127,7 @@ async function saveRender(f) {
 /* ---------------------------------------------------------------- 3D snapshot */
 export function snapshot3D() {
   const { studio } = E;
-  studio.renderer.render(studio.scene, studio.camera);
+  studio.renderFrame();
   download(studio.renderer.domElement.toDataURL('image/png'), fname('3d-snapshot') + '.png');
   E.toast('3D snapshot saved.');
 }

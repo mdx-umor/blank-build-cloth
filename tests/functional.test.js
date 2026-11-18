@@ -331,15 +331,26 @@ fs.mkdirSync(OUT, { recursive: true });
   await t('Backdrop on/off, shadow, colour, brightness, contrast', async () => {
     await click('[data-k="scene.backdrop"] + span'); const off = await ev(() => DM.studio.wall.visible === false); await click('[data-k="scene.backdrop"] + span');
     await click('[data-k="scene.shadows"] + span'); const sh = await ev(() => DM.studio.key.castShadow === false); await click('[data-k="scene.shadows"] + span');
-    await p.click('#tabScene [data-setk="scene.bgColor"][data-val="#a9c2ab"]');
+    await p.click('#tabScene [data-setk="scene.bgColor"][data-val="#d3dccf"]');
     await p.fill('[data-k="scene.bgContrast"]', '1.4'); await p.dispatchEvent('[data-k="scene.bgContrast"]', 'change');
-    return off && sh && await ev(() => DM.doc.scene.bgColor === '#a9c2ab' && DM.doc.scene.bgContrast === 1.4);
+    return off && sh && await ev(() => DM.doc.scene.bgColor === '#d3dccf' && DM.doc.scene.bgContrast === 1.4);
   });
-  await t('Backdrop light (every gobo) + invert', async () => {
-    const ids = await ev(() => [...document.querySelectorAll('[data-gobo]')].map(b => b.dataset.gobo));
-    for (const id of ids) { await p.click(`[data-gobo="${id}"]`); await wait(80); }
-    await p.click('[data-gobo="leaves"]'); await click('[data-k="scene.goboInvert"] + span'); await click('[data-k="scene.goboInvert"] + span');
-    return ids.length >= 12 && await ev(() => DM.doc.scene.gobo === 'leaves');
+  await t('Backdrop light presets (everyday, Halloween, Christmas) + invert', async () => {
+    const ids = await ev(() => [...document.querySelectorAll('[data-k="scene.gobo"] option')].map(o => o.value));
+    const groups = await ev(() => [...document.querySelectorAll('[data-k="scene.gobo"] optgroup')].map(g => g.label));
+    for (const id of ids) { await p.selectOption('[data-k="scene.gobo"]', id); await wait(60); }
+    await p.selectOption('[data-k="scene.gobo"]', 'leaves'); await click('[data-k="scene.goboInvert"] + span'); await click('[data-k="scene.goboInvert"] + span');
+    return (ids.length >= 31 && groups.length === 2 && await ev(() => DM.doc.scene.gobo === 'leaves')) || `presets=${ids.length} groups=${groups}`;
+  });
+  await t('Backdrop stays still while the garment is turned, zoomed and moved', async () => {
+    // the backdrop near the top corners must look the same before and after (the garment never reaches there)
+    const shot = () => ev(() => { DM.studio.renderFrame(); const src = DM.studio.renderer.domElement, c = document.createElement('canvas'); c.width = 40; c.height = 40; const x = c.getContext('2d'); const out = []; for (const [fx, fy] of [[0.03, 0.03], [0.97, 0.03], [0.03, 0.2], [0.97, 0.2]]) { x.drawImage(src, src.width * fx - 20, src.height * fy - 20, 40, 40, 0, 0, 40, 40); const d = x.getImageData(0, 0, 40, 40).data; let r = 0, g = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; } out.push([r, g, b].map(v => Math.round(v / 1600))); } return out; });
+    const a = await shot();
+    await ev(() => { const st = DM.studio, t = st.controls.target, cam = st.camera; st.viewYaw = st.targetYaw = 1.1; st.turntable.rotation.y = 1.1; cam.position.sub(t).setLength(cam.position.distanceTo(t) * 0.55).add(t); cam.position.x += 18; t.x += 18; st.controls.update(); });
+    const b = await shot();
+    await click('#resetViewBtn');
+    const diff = Math.max(...a.flatMap((q, i) => q.map((v, k) => Math.abs(v - b[i][k]))));
+    return diff <= 3 || `backdrop moved (largest change ${diff})`;
   });
   await t('Key light side/height/power', async () => { await p.fill('[data-k="scene.lightSide"]', '40'); await p.dispatchEvent('[data-k="scene.lightSide"]', 'change'); return ev(() => DM.doc.scene.lightSide === 40 && DM.studio.key.position.x > 0); });
   await t('Hanger toggle + colour', async () => { await p.click('#tabScene [data-setk="scene.hangerColor"][data-val="#7a5236"]'); await click('#hangerBtn'); const off = await ev(() => DM.doc.scene.hanger === false); await click('#hangerBtn'); return off && await ev(() => DM.doc.scene.hangerColor === '#7a5236'); });
@@ -351,7 +362,7 @@ fs.mkdirSync(OUT, { recursive: true });
     return off && shp && await ev(() => DM.doc.details.labelAsFabric === true);
   });
   await t('Auto-rotate', async () => { await click('#spinBtn'); const on = await ev(() => DM.studio.autoRotate); await click('#spinBtn'); return on; });
-  await t('Default settings: save / reset / factory', async () => { await p.click('#tabScene [data-act="lookSave"]'); await p.click('#tabScene [data-act="lookFactory"]'); const f = await ev(() => DM.doc.scene.bgColor === '#ebeae8'); await p.click('#tabScene [data-act="lookReset"]'); return f && await ev(() => DM.doc.scene.bgColor === '#a9c2ab'); });
+  await t('Default settings: save / reset / factory', async () => { await p.click('#tabScene [data-act="lookSave"]'); await p.click('#tabScene [data-act="lookFactory"]'); const f = await ev(() => DM.doc.scene.bgColor === '#ebeae8'); await p.click('#tabScene [data-act="lookReset"]'); return f && await ev(() => DM.doc.scene.bgColor === '#d3dccf'); });
   /* ---------------- 3D view ---------------- */
   await t('Views Front/Back/Side/¾ + quality menu + reset view', async () => {
     for (const v of ['back', 'side', 'three', 'front']) { await p.click(`#viewSeg [data-view="${v}"]`); await wait(250); }

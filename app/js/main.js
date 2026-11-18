@@ -16,7 +16,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const FACTORY_SCENE = { backdrop: true, bgColor: '#ebeae8', bgBright: 1, bgContrast: 1, gobo: 'window', goboInvert: false, lightSide: -32, lightHeight: 38, lightPower: 1, softness: 0.5, hdri: true, hdriPower: 1, hdriRot: 0, envPower: 0.55, ambient: 1, fill: 1, shadows: true, hanger: true, hangerColor: '#f4f4f2', spin: false };
+const FACTORY_SCENE = { backdrop: true, bgColor: '#ebeae8', bgBright: 1, bgContrast: 1, gobo: 'leaves', goboInvert: false, lightSide: -32, lightHeight: 38, lightPower: 1, softness: 0.5, hdri: true, hdriPower: 1.15, hdriRot: 38, envPower: 0.55, ambient: 1, fill: 1, shadows: false, hanger: true, hangerColor: '#f4f4f2', spin: false };
 const FACTORY_FABRIC = { color: '#ffffff', mode: 'solid', color2: '#5b5bd6', stops: null, angle: 90, type: 'jersey', knit: 1, relief: 0.6, wash: 'none', washAmt: 0.8, washSeed: 0, heather: false, wrinklesOn: true, wrinkles: 0.8, ao: true, bright: 1, contrast: 1, pieceColors: {} };
 const DEFAULT_DOC = () => ({
   v: 2, name: 'Untitled design', garment: 'tee', items: [],
@@ -37,7 +37,7 @@ const COLOR_GROUPS = [
   { id: 'collar', name: 'Collar', pieces: ['collar', 'collarStand'] },
   { id: 'yoke', name: 'Back yoke', pieces: ['yoke'] },
 ];
-const BG_SWATCHES = ['#f4f6f8', '#ffffff', '#efe9df', '#e3dcd0', '#dfe5dc', '#dde5ee', '#efe1e1', '#9a9a9a', '#3a3c40', '#e07a2e', '#4a3a6b', '#1c1d20', '#efe6d2', '#8c1d2a', '#1f4d36', '#c9a24b', '#a9c2ab', '#ebeae8'];
+const BG_SWATCHES = ['#f4f3f0', '#ffffff', '#ece6dc', '#d9cfc0', '#d3dccf', '#cfd9e3', '#e3d3d0', '#a2a2a0', '#2b2c2e', '#d9661f', '#3e2a57', '#1c1b1f', '#e8e0ce', '#8e1b22', '#1f4d36', '#f4f6f8', '#c9a24b']; // as in the original
 const HANGER_SWATCHES = ['#f4f4f2', '#2a2826', '#b58a5c', '#7a5236', '#9aa0a6', '#c8a24a'];
 const LABEL_SWATCHES = ['#f4f4f2', '#efe6d2', '#161616'];
 
@@ -597,8 +597,7 @@ function renderScene() {
     ${toggleRow('scene.backdrop', 'Studio backdrop', true)}
     ${toggleRow('scene.shadows', 'Shadow on the backdrop', true)}
     ${swatchRow('scene.bgColor', BG_SWATCHES, 'Backdrop colour')}
-    <div class="subhead">Backdrop light</div>
-    <div class="gobo-grid">${GOBOS.map(gb => `<button data-gobo="${gb.id}" class="${(s.gobo || 'none') === gb.id ? 'on' : ''}" title="${gb.name}"><img src="${goboThumb(gb.id)}" alt=""><span>${gb.name}</span></button>`).join('')}</div>
+    <div class="row"><label>Backdrop light</label><div class="ctl gobo-pick"><img src="${goboThumb(s.gobo || 'none')}" alt="" title="${esc(GOBOS.find(gb => gb.id === (s.gobo || 'none'))?.name || '')}"><select data-k="scene.gobo" aria-label="Backdrop light">${goboOptions(s.gobo || 'none')}</select></div></div>
     ${toggleRow('scene.goboInvert', 'Invert light')}
     ${slider('scene.bgBright', 'Backdrop brightness', 0.5, 1.5, 0.01)}
     ${slider('scene.bgContrast', 'Backdrop contrast', 0.5, 1.6, 0.01)}`);
@@ -621,6 +620,15 @@ function renderScene() {
   html += sec('Details', det);
   html += defaultsSec();
   $('#tabScene').innerHTML = html;
+}
+// the backdrop light list, grouped like the original (everyday lights, then seasonal sets)
+function goboOptions(cur) {
+  let html = '', group = null;
+  for (const gb of GOBOS) {
+    if ((gb.group || null) !== group) { if (group) html += '</optgroup>'; group = gb.group || null; if (group) html += `<optgroup label="${esc(group)}">`; }
+    html += `<option value="${gb.id}" ${cur === gb.id ? 'selected' : ''}>${esc(gb.name)}</option>`;
+  }
+  return html + (group ? '</optgroup>' : '');
 }
 const goboThumbs = {};
 function goboThumb(id) { if (goboThumbs[id]) return goboThumbs[id]; const s = goboCanvas(id), t = makeCanvas(96, 96); t.getContext('2d').drawImage(s, 0, 0, 96, 96); return (goboThumbs[id] = t.toDataURL()); }
@@ -758,7 +766,6 @@ function bindInspector() {
     if (b.dataset.flag) { const it = app.selected(); it[b.dataset.flag] = !it[b.dataset.flag]; b.classList.toggle('on'); app.itemsChanged(false); commit(); return; }
     if (b.dataset.shape) { const it = app.selected(); const wasLine = isLine(it.shape); it.shape = b.dataset.shape; if (isLine(it.shape)) { it.h = 0.4; it.dashed = it.shape === 'dashed'; } else if (wasLine) it.h = it.w * 0.6; it.name = SHAPES.find(s => s.id === it.shape)?.name; app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return; }
     if (b.dataset.align) return alignSel(b.dataset.align);
-    if (b.dataset.gobo) { app.doc.scene.gobo = b.dataset.gobo; onValue('scene.gobo', false); commit(); return; }
     if (b.dataset.lact) {
       const id = b.closest('[data-layer]').dataset.layer, it = app.doc.items.find(i => i.id === id);
       if (b.dataset.lact === 'vis') it.hidden = !it.hidden; else it.locked = !it.locked;
@@ -958,7 +965,7 @@ function loadDoc(doc, assets, fileId = null) {
 }
 function thumbnail() {
   try {
-    studio.renderer.render(studio.scene, studio.camera);
+    studio.renderFrame();
     const src = studio.renderer.domElement, t = makeCanvas(240, 300), c = t.getContext('2d');
     const k = Math.max(240 / src.width, 300 / src.height);
     c.fillStyle = app.doc.scene.bgColor; c.fillRect(0, 0, 240, 300);

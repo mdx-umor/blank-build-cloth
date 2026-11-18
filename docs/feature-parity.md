@@ -88,9 +88,10 @@ Legend: ✅ works like the original · ➕ Design Master extra · ⏸ later (acc
 | Function | Design Master |
 |---|---|
 | Studio HDRI on/off, intensity, rotation | ✅ |
-| Studio backdrop on/off, shadow on the backdrop | ✅ |
+| Studio backdrop on/off, shadow on the backdrop (off by default); the backdrop stays fixed on screen while the garment is turned, zoomed or moved | ✅ |
+| Backdrop colours: the original's 17 + custom + eyedropper | ✅ |
 | Backdrop colours + custom + eyedropper | ✅ |
-| Backdrop light (gobos) + invert | ✅ |
+| Backdrop light presets, as in the original: None, Window, Beam, Blinds, Soft blinds, Window blinds, Arched window, Window & leaves, Light stripes, Leaf shadows (default), Palm fronds, Fan palm, Branches, Spotlight, Light & shade (+ Round window ➕); 🎃 Halloween: Spider web, Pumpkins · glow, Bats, Bare branches, Gothic windows, Jack-o’-lantern faces; 🎄 Christmas: Pine window, Frost on glass, Dense spruce, Spruce frame, Garland & fir, Arched / Round / Leaded window · frost, Winter forest; Invert light | ✅ |
 | Backdrop brightness, contrast | ✅ |
 | Key light: side, height, power (+ softness, ambient ➕) | ✅ |
 | Hanger show + colours + custom | ✅ |

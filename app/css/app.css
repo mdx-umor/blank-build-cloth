@@ -358,3 +358,7 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
 .shape-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
 .shape-row select { flex: 1; }
 .shape-row input[type=color] { width: 34px; height: 30px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 0; background: none; }
+/* backdrop light: dropdown with a preview of the light */
+.gobo-pick { display: flex; gap: 8px; align-items: center; }
+.gobo-pick img { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line-strong); object-fit: cover; flex: none; }
+.gobo-pick select { flex: 1; min-width: 0; }
