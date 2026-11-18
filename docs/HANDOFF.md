@@ -60,6 +60,15 @@ Key idea: each garment's **pattern pieces map 1:1 onto the 3D UVs**, so artwork 
   `@gltf-transform/cli`. Owner should send more models made the same way (T-shirts, hoodies, polos…).
 - Licensing: if models come from a paid mockup pack, the owner must check the licence allows use in a paid product.
 
+## Craft Anything (study/rebuild tool) — branch `claude/craft-anything-tool`
+- Added as a git submodule at `tools/craft-anything` (github.com/umor1234/craft-anything, v0.6.1) and registered
+  for Claude Code in `.mcp.json` (`craft-anything-cli mcp --project .craft/design-master.cany`).
+- Setup on your machine: **`docs/tools/craft-anything.md`** (submodule init → Rust 1.97+ →
+  `cargo install --locked --path tools/craft-anything/apps/craft-anything-cli` → `craft-anything-cli doctor`).
+- Verified in the cloud session: release build in 6 min, `doctor` healthy, MCP handshake + tool call OK.
+- Use it to study the reference site (visitor view by default; `--deep` for private deeper study) and to compare
+  our build with it. Its own `AGENTS.md`/`CLAUDE.md` rules apply only when changing Craft Anything itself.
+
 ## Testing notes
 - Run: see the header of `tests/functional.test.js` (local server on port 8765 + Playwright).
 - Headless Chromium with software GL (swiftshader) is very slow for 3D (view turns ~4 s, video recording minutes) — use long click timeouts there; on a real GPU it's fast.
