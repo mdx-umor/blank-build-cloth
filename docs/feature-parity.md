@@ -116,3 +116,4 @@ Legend: ✅ works like the original · ➕ Design Master extra · ⏸ later (acc
 | Wash: Spot size, Wash the prints too, Another pattern | ✅ |
 | Gradient: draggable midpoints between colours | ✅ |
 | Vector pictures show “Vector · sharp at any size” instead of DPI | ✅ |
+| Real 3D model: Zip hoodie (owner's model + the pattern from the owner's screenshot: fronts with zip, back, sleeves, cuffs, 3-part waistband, hood halves, pockets; rib knit on cuffs and waistband; colourable zip and drawcords) | ➕ |

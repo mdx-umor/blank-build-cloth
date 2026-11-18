@@ -8,13 +8,15 @@ from mathutils.bvhtree import BVHTree
 
 args = sys.argv[sys.argv.index('--') + 1:]
 OBJ, OUT, RATIO = args[0], args[1], float(args[2])
-LABELS_ONLY = len(args) > 3 and args[3] == 'labels-only'
+MODE = args[3] if len(args) > 3 else 'all'   # 'labels-only' | 'cut' (stop after flattening, write panels.json) | 'all'
+LABELS_ONLY = MODE == 'labels-only'
 
-INNER, FRONT_L, FRONT_R, BACK, SLEEVE_L, SLEEVE_R, CUFF_L, CUFF_R, HEM_L, HOOD_L, HOOD_R, CORD, ZIP, HEM_R, HEM_B = range(15)
+INNER, FRONT_L, FRONT_R, BACK, SLEEVE_L, SLEEVE_R, CUFF_L, CUFF_R, HEM_L, HOOD_L, HOOD_R, CORD, ZIP, HEM_R, HEM_B, POCKET_L, POCKET_R = range(17)
 NAMES = {FRONT_L: ('frontL', 'Front · left'), FRONT_R: ('frontR', 'Front · right'), BACK: ('back', 'Back'),
          SLEEVE_L: ('sleeveL', 'Left sleeve'), SLEEVE_R: ('sleeveR', 'Right sleeve'), CUFF_L: ('cuffL', 'Left cuff'),
          CUFF_R: ('cuffR', 'Right cuff'), HEM_L: ('waistbandL', 'Waistband · front left'), HEM_R: ('waistbandR', 'Waistband · front right'),
-         HEM_B: ('waistbandB', 'Waistband · back'), HOOD_L: ('hoodL', 'Hood · left'), HOOD_R: ('hoodR', 'Hood · right')}
+         HEM_B: ('waistbandB', 'Waistband · back'), HOOD_L: ('hoodL', 'Hood · left'), HOOD_R: ('hoodR', 'Hood · right'),
+         POCKET_L: ('pocketL', 'Pocket · left'), POCKET_R: ('pocketR', 'Pocket · right')}
 PANELS = set(NAMES)
 
 o = bpy.data.objects[OBJ]
@@ -57,16 +59,49 @@ nbrs = [[g.index for e in f.edges for g in e.link_faces if g is not f] for f in 
 s = esc[:]
 for it in range(6):
     s = [(s[i] + sum(s[j] for j in nbrs[i])) / (1 + len(nbrs[i])) for i in range(F)]
-outer = [s[i] > 0.22 and comp[i] == main for i in range(F)]
+# Seeds: faces that clearly see the sky are outside; faces seen from inside the body, the sleeves and the hood are
+# lining. Both grow over the surface; they meet at the openings (hem, cuffs, hood edge), so the outside of the garment
+# that you can't see (under the arms, the back under the hood) still counts as outside.
+def interior_points():
+    pts = [Vector((0, -0.01, z)) for z in (0.15, 0.3, 0.45, 0.6)]
+    for sgn in (1, -1):
+        for zc in (0.08, 0.18, 0.3, 0.42):
+            ring = [cen[i] for i in range(F) if comp[i] == main and abs(cen[i].z - zc) < 0.01 and cen[i].x * sgn > 0.27]
+            if len(ring) > 30: pts.append(sum(ring, Vector()) / len(ring))
+    hood = [cen[i] for i in range(F) if comp[i] == main and abs(cen[i].z - 0.84) < 0.01 and abs(cen[i].x) < 0.2]
+    if hood: pts.append(sum(hood, Vector()) / len(hood))
+    return pts
+lining_seed = set()
+rnd2 = random.Random(9)
+for P in interior_points():
+    for _ in range(3000):
+        dv = Vector((rnd2.gauss(0, 1), rnd2.gauss(0, 1), rnd2.gauss(0, 1))).normalized()
+        h = bvh.ray_cast(P, dv, 2.0)
+        if h[0] is not None and h[1].dot(dv) < 0: lining_seed.add(h[2])
+side = {}; q = []
+for i in range(F):
+    if comp[i] != main: continue
+    if i in lining_seed: side[i] = 0; q.append((0.0, i))
+    elif s[i] > 0.6: side[i] = 1; q.append((0.0, i))
+heapq.heapify(q); dist = {i: 0.0 for _, i in q}
+while q:
+    dv, i = heapq.heappop(q)
+    if dv > dist.get(i, 1e9): continue
+    for j in nbrs[i]:
+        nd = dv + (cen[i] - cen[j]).length
+        if comp[j] == main and nd < dist.get(j, 1e9): dist[j] = nd; side[j] = side[i]; heapq.heappush(q, (nd, j))
+outer = [side.get(i, 0) == 1 and comp[i] == main for i in range(F)]
+print('OUTSIDE', sum(outer), 'LINING', F - sum(outer), 'lining seeds', len(lining_seed))
 
 # ---- panels, cut where a hoodie's seams are (+x = the wearer's left; front = -y; metres) ----------------------
+CUFF_TOP = 0.072  # rib cuffs ≈ 5.5 cm above the sleeve end, waistband ≈ 6 cm (as in the pattern)
 def panel(c):
     x, y, z = c; ax = abs(x); L = x > 0
     zhb = 0.62 + 0.14 * min(1.0, ax / 0.2) ** 2          # lower edge of the hood where it lies on the back
     if (z > 0.775 and ax < 0.2) or (y > 0.06 and z > zhb and ax < 0.22): return HOOD_L if L else HOOD_R
     xarm = 0.25 if z < 0.22 else (0.225 if z < 0.6 else 0.22)   # dropped-shoulder armhole seam
-    if ax > xarm: return (CUFF_L if L else CUFF_R) if z < 0.095 else (SLEEVE_L if L else SLEEVE_R)
-    if z < 0.075: return (HEM_L if L else HEM_R) if y < -0.01 else HEM_B   # waistband: two fronts and a back, as in the pattern
+    if ax > xarm: return (CUFF_L if L else CUFF_R) if z < CUFF_TOP else (SLEEVE_L if L else SLEEVE_R)
+    if z < 0.06: return (HEM_L if L else HEM_R) if y < -0.01 else HEM_B   # waistband: two fronts and a back, as in the pattern
     if y < -0.01: return FRONT_L if L else FRONT_R
     return BACK
 lab = [panel(cen[i]) if outer[i] else INNER for i in range(F)]
@@ -111,6 +146,18 @@ for i0 in range(F):
     zs = [cen[i].z for i in grp]
     if len(grp) < 40 or max(zs) - min(zs) < 0.03:  # a cord is long and thin
         for i in grp: lab[i] = panel(cen[i])
+# pockets: on the lower front, a layer with the front fabric just behind it (look through the pocket to the front)
+for i in range(F):
+    x, y, z = cen[i]
+    if lab[i] in (FRONT_L, FRONT_R) and 0.07 < z < 0.4 and abs(x) > 0.012 and bm.faces[i].normal.y < -0.3:
+        p0 = cen[i] + Vector((0, 0.002, 0)); travelled = 0.0; hit = None
+        for _ in range(3):
+            h = bvh.ray_cast(p0, Vector((0, 1, 0)), 0.05 - travelled)
+            if h[0] is None: break
+            travelled += h[3]
+            if h[1].y < 0: hit = h; break
+            p0 = h[0] + Vector((0, 0.0015, 0)); travelled += 0.0015
+        if hit is not None and 0.003 < travelled < 0.035: lab[i] = POCKET_L if x > 0 else POCKET_R
 # where the hood lies on the back, hood and back are parted by the hood's rim: grow both over the outside surface
 # from a hood seed and a back seed, so the line between them lands on that rim
 zone = [i for i in range(F) if outer[i] and lab[i] in (BACK, HOOD_L, HOOD_R) and cen[i].y > 0.04 and 0.5 < cen[i].z < 0.86]
@@ -200,13 +247,15 @@ for l, faces in islands.items():
                 for g in e.link_faces:
                     if g.index in fs and g.index not in seen: seen.add(g.index); grp.append(g.index); st.append(g.index)
         parts.append((l, grp))
-# small stray parts join the lining (they hold no print)
-keep = []
+# one part per panel: the biggest; other bits of the outside follow the nearest panel later (EXTRA)
+EXTRA = 17
+best = {}
 for l, grp in parts:
-    a = sum(bm.faces[i].calc_area() for i in grp)
-    if a < 0.002:  # < 20 cm²
-        for i in grp: lab[i] = INNER
-    else: keep.append((l, grp))
+    if l not in best or len(grp) > len(best[l]): best[l] = grp
+for l, grp in parts:
+    if best[l] is not grp:
+        for i in grp: lab[i] = EXTRA
+keep = [(l, best[l]) for l in best]
 for e in bm.edges:
     lf = e.link_faces
     e.seam = len(lf) == 2 and lab[lf[0].index] != lab[lf[1].index]
@@ -265,6 +314,24 @@ for l, grp in keep:
             u2, v2 = c * u - s_ * v, s_ * u + c * v
             lp[uvl].uv = (-u2 if mirror else u2, v2)
 bm.to_mesh(me); me.update()
+if MODE == 'cut':
+    # each panel: its vertices (3D + flat position, split where the flat layout is cut), triangles, label
+    k_flat = math.sqrt(sum(bm.faces[i].calc_area() for l, g in keep for i in g) / (sum(abs(tri_uv_area(bm.faces[i])) for l, g in keep for i in g) or 1)) * 100
+    out = []
+    for pi, (l, grp) in enumerate(keep):
+        ids = {}; verts = []; tris = []; loops = []
+        for i in grp:
+            t = []
+            for lp in bm.faces[i].loops:
+                key = (lp.vert.index, round(lp[uvl].uv.x, 6), round(lp[uvl].uv.y, 6))
+                if key not in ids: ids[key] = len(verts); verts.append([*lp.vert.co, lp[uvl].uv.x * k_flat, -lp[uvl].uv.y * k_flat])
+                t.append(ids[key]); loops.append([i, lp.index, ids[key]])
+            tris.append(t)
+        out.append({'label': l, 'id': NAMES[l][0], 'name': NAMES[l][1], 'area3d_cm2': sum(bm.faces[i].calc_area() for i in grp) * 1e4, 'verts': verts, 'tris': tris, 'loops': loops})
+    json.dump({'panels': out}, open(OUT + '/panels.json', 'w'))
+    json.dump(lab, open(OUT + '/labels.json', 'w'))
+    bpy.ops.wm.save_as_mainfile(filepath=OUT + '/cut.blend')
+    print('CUT', len(out), 'panels written'); sys.exit(0)
 bpy.ops.object.mode_set(mode='EDIT')
 bpy.ops.uv.select_all(action='SELECT')
 bpy.ops.uv.pack_islands(rotate=False, margin=0.012)

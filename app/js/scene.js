@@ -139,6 +139,25 @@ export class Studio {
     const toFloat = (a, n) => { const f = new Float32Array(a.count * n); for (let i = 0; i < a.count; i++) for (let k = 0; k < n; k++) f[i * n + k] = a.getComponent(i, k); return new THREE.BufferAttribute(f, n); };
     const panelMeshes = [];
     const box = new THREE.Box3();
+    // which piece does a point of the model's own UV layout belong to? (bounding boxes first, then the outline)
+    const boxes = g.pieces.map(p => [p.sx0 - 0.8, p.sy0 - 0.8, p.sx0 + p.w + 0.8, p.sy0 + p.h + 0.8, p]);
+    const inPoly = (x, y, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
+    const pieceOf = (x, y) => {
+      const cand = boxes.filter(b => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]);
+      if (cand.length <= 1) return cand[0]?.[4];
+      return (cand.find(b => inPoly(x - b[4].sx0, y - b[4].sy0, b[4].poly)) || cand.sort((a, b) => (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]))[0])[4];
+    };
+    // move the UVs from the model's layout to the app's cutting sheet; returns each vertex's piece
+    const remapUV = (uv) => {
+      const vp = new Array(uv.count);
+      for (let i = 0; i < uv.count; i++) {
+        let sx = (uv.getX(i) - U.u0) * U.k + U.M, sy = (U.v1 - (1 - uv.getY(i))) * U.k + U.M; // glTF flips V
+        const p = pieceOf(sx, sy); vp[i] = p;
+        if (p) { sx += p.sx - p.sx0; sy += p.sy - p.sy0; }
+        uv.setXY(i, sx / sh.w, 1 - sy / sh.h);
+      }
+      return vp;
+    };
     gltf.scene.traverse(o => {
       if (!o.isMesh) return;
       const geo = new THREE.BufferGeometry();
@@ -149,28 +168,32 @@ export class Studio {
       geo.applyMatrix4(o.matrixWorld); geo.scale(100, 100, 100); // metres → cm
       const name = o.material?.name || '';
       if (name.startsWith('Fabric')) {
-        const uv = geo.attributes.uv;
-        // which piece does a point of the original UV layout belong to? (bounding boxes first, then the outline)
-        const boxes = g.pieces.map(p => [p.sx0 - 0.8, p.sy0 - 0.8, p.sx0 + p.w + 0.8, p.sy0 + p.h + 0.8, p]);
-        const inPoly = (x, y, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
-        const pieceOf = (x, y) => {
-          const cand = boxes.filter(b => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]);
-          if (cand.length <= 1) return cand[0]?.[4];
-          return (cand.find(b => inPoly(x - b[4].sx0, y - b[4].sy0, b[4].poly)) || cand.sort((a, b) => (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]))[0])[4];
-        };
-        for (let i = 0; i < uv.count; i++) {
-          let sx = (uv.getX(i) - U.u0) * U.k + U.M, sy = (U.v1 - (1 - uv.getY(i))) * U.k + U.M; // glTF flips V
-          const p = pieceOf(sx, sy);
-          if (p) { sx += p.sx - p.sx0; sy += p.sy - p.sy0; }
-          uv.setXY(i, sx / sh.w, 1 - sy / sh.h);
-        }
+        const vp = remapUV(geo.attributes.uv);
         geo.computeBoundingBox(); box.union(geo.boundingBox);
         cavityAO(geo, 0.8);
-        const outer = new THREE.Mesh(geo, this.mats.main); outer.castShadow = outer.receiveShadow = true; outer.userData = { panel: { model: true }, pick: true };
+        // rib pieces (cuffs, waistband) get the rib knit: triangles sorted into two groups
+        const ribIds = new Set(g.pieces.filter(p => p.rib).map(p => p.id));
+        let mat = this.mats.main;
+        if (ribIds.size && geo.index) {
+          const idx = geo.index.array, a = [], b = [];
+          for (let t = 0; t < idx.length; t += 3) {
+            const p = vp[idx[t]];
+            (p && ribIds.has(p.id) ? b : a).push(idx[t], idx[t + 1], idx[t + 2]);
+          }
+          if (b.length) { geo.setIndex([...a, ...b]); geo.clearGroups(); geo.addGroup(0, a.length, 0); geo.addGroup(a.length, b.length, 1); mat = [this.mats.main, this.mats.rib]; }
+        }
+        const outer = new THREE.Mesh(geo, mat); outer.castShadow = outer.receiveShadow = true; outer.userData = { panel: { model: true }, pick: true };
         const inner = new THREE.Mesh(geo, this.mats.inner); inner.receiveShadow = true;
         group.add(outer, inner); panelMeshes.push(outer);
+      } else if (name.startsWith('Inside')) { // a lining modelled as its own surface: the inside sheet, seen from inside
+        geo.computeBoundingBox(); box.union(geo.boundingBox);
+        if (geo.attributes.uv) remapUV(geo.attributes.uv);
+        cavityAO(geo, 0.9);
+        if (!this.mats.innerFront) { this.mats.innerFront = this.mats.inner.clone(); this.mats.innerFront.side = THREE.FrontSide; this.mats.innerFront.onBeforeCompile = this.mats.inner.onBeforeCompile; }
+        this.mats.innerFront.map = this.mats.inner.map;
+        const m = new THREE.Mesh(geo, this.mats.innerFront); m.receiveShadow = true; m.castShadow = true; group.add(m);
       } else {
-        const m = new THREE.Mesh(geo, name.startsWith('Thread') ? this.mats.thread : this.mats.button);
+        const m = new THREE.Mesh(geo, name.startsWith('Thread') ? this.mats.thread : name.startsWith('Cord') ? this.mats.cord : this.mats.button);
         m.castShadow = m.receiveShadow = true; group.add(m);
       }
     });
@@ -282,7 +305,7 @@ export class Studio {
       const old = this.insideTex;
       this.insideTex = new THREE.CanvasTexture(canvas);
       this.insideTex.colorSpace = THREE.SRGBColorSpace; this.insideTex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-      this.mats.inner.map = this.insideTex; this.mats.label.map = this.insideTex;
+      this.mats.inner.map = this.insideTex; this.mats.label.map = this.insideTex; if (this.mats.innerFront) { this.mats.innerFront.map = this.insideTex; this.mats.innerFront.needsUpdate = true; }
       this.mats.inner.needsUpdate = this.mats.label.needsUpdate = true;
       this._iw = canvas.width; this._ih = canvas.height; old.dispose();
     } else this.insideTex.needsUpdate = true;

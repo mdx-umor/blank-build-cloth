@@ -47,7 +47,7 @@ const app = {
   doc: DEFAULT_DOC(), assets: {}, garment: null, selIds: [], presetIdx: 0, fileId: null,
   baseCanvas: null, atlasCanvas: makeCanvas(4, 4), insideCanvas: makeCanvas(4, 4), overlays: null,
   history: [], future: [], $,
-  startCrop: (it) => startCrop(it), endCrop: (keep) => endCrop(keep), runExport: (a) => runExport(a),
+  startCrop: (it) => startCrop(it), endCrop: (keep) => endCrop(keep), runExport: (a) => runExport(a), switchGarment: (id) => applyGarment(id, { reframe: true }),
   get selId() { return this.selIds[this.selIds.length - 1] || null; },
   selected() { return this.doc.items.find(i => i.id === this.selId) || null; },
   selectedItems() { return this.selIds.map(id => this.doc.items.find(i => i.id === id)).filter(Boolean); },
@@ -583,7 +583,7 @@ function renderFabric() {
     const col = gr.pieces.map(id => f.pieceColors?.[id]).find(Boolean) || f.color;
     return `<div class="trow"><span>${gr.name}</span><span style="display:flex;gap:8px;align-items:center">${on ? `<input type="color" data-block="${gr.id}" value="${col}" style="width:28px;height:24px;border:1px solid var(--line-strong);border-radius:6px;padding:0;background:none" aria-label="${gr.name} colour">` : ''}<label class="toggle"><input type="checkbox" data-blockon="${gr.id}" ${on ? 'checked' : ''} aria-label="${gr.name}"><span></span></label></span></div>`;
   }).join('') + `<div class="hintline">Give sleeves, hood, collar or ribs their own colour.</div>`);
-  if (g.extras.strings.length || g.model) html += sec('Trims', `${g.extras.strings.length ? colorRow('details.cord', 'Drawcords') : ''}${g.model ? colorRow('details.buttons', 'Buttons') : ''}`);
+  if (g.extras.strings.length || g.model) html += sec('Trims', `${g.extras.strings.length || g.trims?.cords ? colorRow('details.cord', 'Drawcords') : ''}${g.model ? colorRow('details.buttons', g.trims?.zip ? 'Zip' : 'Buttons') : ''}`);
   html += defaultsSec();
   $('#tabFabric').innerHTML = html;
 }

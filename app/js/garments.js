@@ -21,6 +21,7 @@ export const GARMENT_LIST = [
   { id: 'hoodie', name: 'Pullover hoodie', cut: 'Kangaroo pocket · drawcords', group: 'Fleece' },
   { id: 'tote', name: 'Tote bag', cut: '38 × 42 cm · canvas', group: 'Accessories' },
   { id: 'shirt-ls', name: 'Long-sleeve shirt', cut: 'Button-up · real 3D model', group: 'Real 3D models', model: 'models/shirt-ls/' },
+  { id: 'hoodie-zip', name: 'Zip hoodie', cut: 'Full zip · real 3D model', group: 'Real 3D models', model: 'models/hoodie-zip/', fabric: 'fleece' },
 ];
 
 /* ---------- garments from real 3D models (cloth-sim GLB + pattern traced from its UVs) ---------- */
@@ -33,14 +34,16 @@ export async function loadModelGarment(id) {
   const J = await (await fetch(meta.model + 'pieces.json')).json();
   const pieces = J.pieces.map(p => {
     const b = polyBounds(p.poly);
-    return { id: p.id, label: p.label, poly: p.poly, holes: p.holes || [], sx: p.sx, sy: p.sy, w: b.x1, h: b.y1, bounds: b, kind: 'main', stitches: [], folds: [] };
+    // markings drawn on the piece (e.g. where a pocket sits), as dashed lines like folds
+    const folds = (p.marks || []).flatMap(m => m.map((q, i) => [q, m[(i + 1) % m.length]]));
+    return { id: p.id, label: p.label, poly: p.poly, holes: p.holes || [], sx: p.sx, sy: p.sy, w: b.x1, h: b.y1, bounds: b, kind: p.rib ? 'rib' : 'main', rib: !!p.rib, stitches: [], folds };
   });
   // re-space the pieces into a readable cutting sheet; vertices are shifted with their piece at load time
   for (const p of pieces) { p.sx0 = p.sx; p.sy0 = p.sy; }
   const sheet = shelfLayout(pieces, 14);
   const [mn, mx] = [J.bbox3d.min, J.bbox3d.max];
   const g = {
-    id, name: meta.name, cut: meta.cut, model: meta.model, glb: meta.model + 'model.glb', spec: {}, fabric: 'smooth',
+    id, name: meta.name, cut: meta.cut, model: meta.model, glb: meta.model + 'model.glb', spec: {}, fabric: meta.fabric || 'smooth', trims: J.trims || null,
     pieces, panels: [], sheet, sheet0: J.sheet, presets: J.presets,
     uvMap: { k: J.cmPerUV, u0: J.uvOrigin[0], v1: J.uvOrigin[1], M: J.margin },
     extras: { necklines: [], label: null, hood: null, pocket: null, strings: [], hanger: { hookOnly: true } },
