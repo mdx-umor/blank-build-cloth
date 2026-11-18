@@ -385,7 +385,15 @@ fs.mkdirSync(OUT, { recursive: true });
     await p.fill('#modelSearch', ''); await p.click('#modelChips [data-mg="Fleece"]'); const nf = await ev(() => document.querySelectorAll('#modelGrid [data-g]').length);
     await p.click('[data-mview="list"]'); const list = await ev(() => document.querySelector('#modelGrid').classList.contains('list'));
     await p.click('#modelGrid [data-g="hoodie"]'); await wait(1500);
-    return n === 1 && nf === 2 && list && await ev(() => DM.doc.garment === 'hoodie' && DM.doc.items.length > 0) || `search=${n} fleece=${nf}`;
+    return n === 2 && nf === 2 && list && await ev(() => DM.doc.garment === 'hoodie' && DM.doc.items.length > 0) || `search=${n} fleece=${nf}`;  // Hoodie + Zip hoodie
+  });
+  await t('Zip hoodie (real model): 14 pattern pieces, rib cuffs and waistband, prints reach the 3D model', async () => {
+    const before = await ev(() => DM.doc.garment);
+    await ev(() => DM.switchGarment('hoodie-zip'));
+    await p.waitForFunction(() => DM.studio.garment?.id === 'hoodie-zip', null, { timeout: 120000 });
+    const info = await ev(() => ({ n: DM.garment.pieces.length, rib: DM.garment.pieces.filter(q => q.rib).map(q => q.id).sort().join(','), trims: !!DM.garment.trims?.zip, meshes: DM.studio.panelMeshes.length }));
+    await ev((g) => DM.switchGarment(g), before); await p.waitForFunction((g) => DM.studio.garment?.id === g, before, { timeout: 120000 });
+    return (info.n === 14 && info.rib === 'cuffL,cuffR,waistbandB,waistbandL,waistbandR' && info.trims && info.meshes > 0) || JSON.stringify(info);
   });
   await t('Switch to the real 3D shirt model and back', async () => {
     await click('#garmentBtn'); await p.click('#modelChips [data-mg="All"]'); await p.click('#modelGrid [data-g="shirt-ls"]'); await wait(8000);
