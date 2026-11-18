@@ -56,7 +56,9 @@ export class Studio {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(28, 1, 1, 3000);
     this.controls = new OrbitControls(this.camera, canvas);
-    Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, minDistance: 40, maxDistance: 600, minPolarAngle: rad(35), maxPolarAngle: rad(118), minAzimuthAngle: -rad(70), maxAzimuthAngle: rad(70), screenSpacePanning: true });
+    // The camera stays in front of the studio (zoom + pan only). Dragging turns the garment itself,
+    // all the way round and tilted, while the backdrop and lights stay put — like a real photo studio.
+    Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, minDistance: 40, maxDistance: 600, enableRotate: false, screenSpacePanning: true });
     const pm = this.pmrem = new THREE.PMREMGenerator(r);
     this.envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture;
     this.scene.environment = this.envTex;
@@ -64,7 +66,8 @@ export class Studio {
     // studio HDRI (soft photo-studio light); falls back to the built-in room light
     new RGBELoader().loadAsync('assets/studio.hdr').then(t => { t.mapping = THREE.EquirectangularReflectionMapping; this.hdrTex = pm.fromEquirectangular(t).texture; t.dispose(); this.updateScene(this.sc || {}); }).catch(() => {});
 
-    this.turntable = new THREE.Group(); this.scene.add(this.turntable);
+    this.tilt = new THREE.Group(); this.scene.add(this.tilt);           // pitch (towards / away from the viewer)
+    this.turntable = new THREE.Group(); this.tilt.add(this.turntable);  // yaw (spin round)
     this.garmentRoot = new THREE.Group(); this.turntable.add(this.garmentRoot);
 
     // backdrop wall + soft floor shadow catcher
@@ -91,6 +94,9 @@ export class Studio {
     this.mats = this.makeMaterials();
     this.quality = 'adaptive'; this.moving = false; this.autoRotate = false;
     this.viewYaw = 0; this.targetYaw = 0;
+    this.viewPitch = 0; this.targetPitch = 0;
+    this.spinVel = { yaw: 0, pitch: 0 };
+    this._bindRotate(canvas);
     this.controls.addEventListener('start', () => { this.moving = true; this.applyPixelRatio(); });
     this.controls.addEventListener('end', () => { this.moving = false; setTimeout(() => this.applyPixelRatio(), 120); });
     this._loop = this._loop.bind(this);
@@ -196,7 +202,7 @@ export class Studio {
     this.garmentRoot.add(group);
     this.panelMeshes = panelMeshes;
     this.garmentRoot.position.set(-g.bounds.cx, -g.bounds.cy, -g.bounds.zc);
-    this.updateNormalRepeat();
+    this.updateNormalRepeat(); this._fitWall();
     if (!this._framed || opts.reframe) { this.frame(); this._framed = true; }
     this.dirty = true;
   }
@@ -211,7 +217,7 @@ export class Studio {
     this.panelMeshes = panelMeshes;
     const b = garment.bounds;
     this.garmentRoot.position.set(-b.cx, -b.cy, 0);
-    this.updateNormalRepeat();
+    this.updateNormalRepeat(); this._fitWall();
     if (!this._framed || opts.reframe) { this.frame(); this._framed = true; }
     this.dirty = true;
   }
@@ -248,7 +254,7 @@ export class Studio {
     for (const mat of [this.mats.main, this.mats.rib]) if (mat.vertexColors !== ao) { mat.vertexColors = ao; mat.needsUpdate = true; }
     this.mats.trim.color.set(fabric.pieceColors?.trim || fabric.color);
     this.mats.trim.normalScale.set(rs, rs);
-    this.updateNormalRepeat();
+    this.updateNormalRepeat(); this._fitWall();
     this.dirty = true;
   }
   updateNormalRepeat() {
@@ -326,8 +332,60 @@ export class Studio {
     const twoPi = Math.PI * 2;
     let d = (this.targetYaw - this.viewYaw) % twoPi; if (d > Math.PI) d -= twoPi; if (d < -Math.PI) d += twoPi;
     this.targetYaw = this.viewYaw + d;
+    this.targetPitch = 0; this.spinVel.yaw = this.spinVel.pitch = 0;
     this.camera.position.set(0, 4, this.camera.position.length()); this.controls.update();
     this.dirty = true;
+  }
+
+  // left-drag on empty 3D space turns the garment (prints being dragged stop the event before it gets here)
+  _bindRotate(canvas) {
+    // dragging across the whole 3D view turns the garment about half a turn
+    const MAX_PITCH = rad(80), PITCH_K = 0.6, WINDOW = 100, MAX_VEL = 0.05;
+    const speed = () => Math.PI / Math.max(300, canvas.clientWidth);
+    let rot = null;
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
+      rot = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), hist: [] };
+      this.spinVel.yaw = this.spinVel.pitch = 0;
+      canvas.setPointerCapture(e.pointerId);
+      canvas.style.cursor = 'grabbing';
+      this.moving = true; this.applyPixelRatio();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!rot || e.pointerId !== rot.id) return;
+      const now = performance.now(), k = speed();
+      const dyaw = (e.clientX - rot.x) * k, dpitch = (e.clientY - rot.y) * k * PITCH_K;
+      rot.x = e.clientX; rot.y = e.clientY; rot.t = now;
+      this.targetYaw += dyaw;
+      this.targetPitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.targetPitch + dpitch));
+      // remember the recent movement so a flick keeps gliding after release
+      rot.hist.push({ t: now, yaw: dyaw, pitch: dpitch });
+      while (rot.hist.length && now - rot.hist[0].t > WINDOW) rot.hist.shift();
+      this.dirty = true;
+    });
+    const end = (e) => {
+      if (!rot || e.pointerId !== rot.id) return;
+      const now = performance.now(), recent = rot.hist.filter(h => now - h.t <= WINDOW);
+      if (recent.length >= 2) {
+        const span = Math.max(16, now - recent[0].t), clamp = v => Math.max(-MAX_VEL, Math.min(MAX_VEL, v));
+        this.spinVel.yaw = clamp(recent.reduce((a, h) => a + h.yaw, 0) * 16 / span);
+        this.spinVel.pitch = clamp(recent.reduce((a, h) => a + h.pitch, 0) * 16 / span) * 0.5;
+      } else this.spinVel.yaw = this.spinVel.pitch = 0; // held still before letting go: no glide
+      rot = null; canvas.style.cursor = '';
+      this.moving = false; setTimeout(() => this.applyPixelRatio(), 120);
+    };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+    this._rotating = () => !!rot;
+  }
+
+  // keep the backdrop wall just behind the garment whatever way it is turned (it must never cut through it)
+  _fitWall() {
+    if (!this._wallBox) this._wallBox = new THREE.Box3();
+    this.tilt.updateMatrixWorld(true);
+    const box = this._wallBox.setFromObject(this.turntable);
+    const z = box.isEmpty() ? -26 : Math.min(-26, box.min.z - 4);
+    if (this.wall.position.z !== z) { this.wall.position.z = z; this.shadowCatcher.position.z = z; }
   }
 
   resize() {
@@ -351,9 +409,21 @@ export class Studio {
     requestAnimationFrame(this._loop);
     if (this.paused) return;
     const ch = this.controls.update();
-    if (this.autoRotate) { this.viewYaw += 0.006; this.targetYaw = this.viewYaw; this.dirty = true; }
-    else if (Math.abs(this.targetYaw - this.viewYaw) > 1e-4) { this.viewYaw += (this.targetYaw - this.viewYaw) * 0.14; this.dirty = true; }
+    const dragging = this._rotating && this._rotating();
+    if (this.autoRotate && !dragging) this.targetYaw += 0.006;
+    if (!dragging && (Math.abs(this.spinVel.yaw) > 1e-4 || Math.abs(this.spinVel.pitch) > 1e-4)) { // glide after a flick
+      this.targetYaw += this.spinVel.yaw;
+      this.targetPitch = Math.max(-rad(80), Math.min(rad(80), this.targetPitch + this.spinVel.pitch));
+      this.spinVel.yaw *= 0.9; this.spinVel.pitch *= 0.9;
+    }
+    let turned = false;
+    if (Math.abs(this.targetYaw - this.viewYaw) > 1e-4) { this.viewYaw += (this.targetYaw - this.viewYaw) * (dragging ? 0.45 : 0.14); turned = true; }
+    else if (this.viewYaw !== this.targetYaw) { this.viewYaw = this.targetYaw; turned = true; }
+    if (Math.abs(this.targetPitch - this.viewPitch) > 1e-4) { this.viewPitch += (this.targetPitch - this.viewPitch) * (dragging ? 0.45 : 0.14); turned = true; }
+    else if (this.viewPitch !== this.targetPitch) { this.viewPitch = this.targetPitch; turned = true; }
     this.turntable.rotation.y = this.viewYaw;
+    this.tilt.rotation.x = this.viewPitch;
+    if (turned) { this._fitWall(); this.dirty = true; }
     if (this.dirty || ch) { this.renderer.render(this.scene, this.camera); this.dirty = false; this.onFrame && this.onFrame(); }
   }
 
@@ -485,9 +555,11 @@ export class Studio {
       const done = new Promise(res => (rec.onstop = res));
       rec.start(250);
       const total = seconds * fps, base = this.viewYaw;
+      this.tilt.rotation.x = 0; // turntable videos are shot upright
       for (let f = 0; f <= total; f++) {
         if (signal?.aborted) break;
         this.turntable.rotation.y = base + (f / total) * Math.PI * 2;
+        this._fitWall();
         this.controls.update();
         r.render(this.scene, this.camera);
         onProgress && onProgress(f, total);
@@ -496,7 +568,7 @@ export class Studio {
       rec.stop(); await done;
       return new Blob(chunks, { type: mime.split(';')[0] });
     } finally {
-      this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw;
+      this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw; this.tilt.rotation.x = this.viewPitch; this._fitWall();
       r.setPixelRatio(prev.pr); this.resize();
       this.paused = false; this.recording = false; this.dirty = true;
     }
@@ -514,7 +586,8 @@ export class Studio {
     this.paused = true;
     const prev = { pr: r.getPixelRatio(), w: this.canvas.clientWidth, h: this.canvas.clientHeight, aspect: this.camera.aspect, yaw: this.viewYaw, keyPos: this.key.position.clone(), clear: r.getClearAlpha(), clearC: r.getClearColor(new THREE.Color()), bg: this.scene.background, wall: this.wall.visible, catcher: this.shadowCatcher.visible, map: this.key.shadow.mapSize.x };
     try {
-      if (view) { this.viewYaw = { front: 0, back: Math.PI, side: Math.PI / 2, three: -Math.PI / 5 }[view] ?? this.viewYaw; this.turntable.rotation.y = this.viewYaw; }
+      if (view) { this.viewYaw = { front: 0, back: Math.PI, side: Math.PI / 2, three: -Math.PI / 5 }[view] ?? this.viewYaw; this.turntable.rotation.y = this.viewYaw; this.tilt.rotation.x = 0; }
+      this._fitWall();
       if (transparent) { this.wall.visible = false; this.scene.background = null; r.setClearColor(0x000000, 0); this.shadowCatcher.visible = keepShadow; }
       this.key.shadow.mapSize.set(4096, 4096); this.key.shadow.map?.dispose(); this.key.shadow.map = null;
       r.setPixelRatio(1); r.setSize(W, H, false);
@@ -555,7 +628,7 @@ export class Studio {
       this.wall.visible = prev.wall; this.shadowCatcher.visible = prev.catcher; this.scene.background = prev.bg;
       r.setClearColor(prev.clearC, prev.clear);
       this.key.shadow.mapSize.set(prev.map, prev.map); this.key.shadow.map?.dispose(); this.key.shadow.map = null;
-      this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw;
+      this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw; this.tilt.rotation.x = this.viewPitch; this._fitWall();
       r.setPixelRatio(prev.pr); this.resize();
       this.paused = false; this.dirty = true;
     }
