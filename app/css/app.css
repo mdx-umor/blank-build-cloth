@@ -349,3 +349,12 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
 .ht-col input { width: 28px; height: 24px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 0; background: none; }
 @media (max-width: 760px) { .ht-body, .render-body { grid-template-columns: 1fr; } }
 .grad-bar .mid { position: absolute; bottom: 100%; width: 10px; height: 10px; margin-left: -5px; margin-bottom: 3px; transform: rotate(45deg); background: var(--panel); border: 1.5px solid var(--ink-2, var(--ink)); cursor: ew-resize; }
+/* shapes popover: icon grid, as in the original */
+#shapesMenu { min-width: 0; display: grid; grid-template-columns: repeat(4, 44px); gap: 4px; padding: 8px; }
+#shapesMenu[hidden] { display: none; }
+#shapesMenu button { width: 44px; height: 40px; padding: 0; align-items: center; justify-content: center; }
+#shapesMenu button.on { background: var(--accent-soft); color: var(--accent); }
+#shapesMenu svg { width: 20px; height: 20px; }
+.shape-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.shape-row select { flex: 1; }
+.shape-row input[type=color] { width: 34px; height: 30px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 0; background: none; }

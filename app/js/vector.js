@@ -1,7 +1,7 @@
 // Design Master — vector output for print files. Text becomes outlined letters (paths, no fonts needed at the
 // print shop), shapes become paths, SVG pictures stay vector, PDF/Illustrator pictures stay vector in PDF.
 // Pictures (and anything with picture-only effects) go in as PNG.
-import { layoutText, shapePath, isLine, itemHeight, itemRaster, colourAdjusted, FONTS } from './atlas.js';
+import { layoutText, shapePath, shapeGradient, isLine, itemHeight, itemRaster, colourAdjusted, FONTS } from './atlas.js';
 import { svgSize } from './importer.js';
 import { makeCanvas, rad } from './util.js';
 
@@ -79,10 +79,15 @@ export async function itemSvg(it, assets, { alone = false, dpi = 300 } = {}) {
   if (it.type === 'shape') {
     const rec = new PathRecorder(); shapePath(rec, it.shape, w, it.h);
     const lw = (it.thick || 3) / 10;
+    const gr = shapeGradient(it), gid = `g${++uidN}`;
+    const defs = !gr ? '' : gr.type === 'radial'
+      ? `<defs><radialGradient id="${gid}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="${n(gr.r)}">${gr.stops.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')}</radialGradient></defs>`
+      : `<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${n(gr.x1)}" y1="${n(gr.y1)}" x2="${n(gr.x2)}" y2="${n(gr.y2)}">${gr.stops.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')}</linearGradient></defs>`;
+    const col = gr ? `url(#${gid})` : it.color;
     const paint = isLine(it.shape) || it.outline
-      ? `fill="none" stroke="${it.color}" stroke-width="${n(lw)}" stroke-linejoin="round" stroke-linecap="round"${it.dashed || it.shape === 'dashed' ? ` stroke-dasharray="${n(lw * 3)} ${n(lw * 2.2)}"` : ''}`
-      : `fill="${it.color}"`;
-    return { svg: g(`<path d="${rec}" ${paint}/>`), kind: 'vector' };
+      ? `fill="none" stroke="${col}" stroke-width="${n(lw)}" stroke-linejoin="round" stroke-linecap="round"${it.dashed || it.shape === 'dashed' ? ` stroke-dasharray="${n(lw * 3)} ${n(lw * 2.2)}"` : ''}`
+      : `fill="${col}"`;
+    return { svg: g(`${defs}<path d="${rec}" ${paint}/>`), kind: 'vector' };
   }
   if (it.type === 'text') {
     const ft = await fontFor(it);

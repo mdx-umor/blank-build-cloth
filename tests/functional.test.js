@@ -152,9 +152,33 @@ fs.mkdirSync(OUT, { recursive: true });
     await p.mouse.move(d1[0], d1[1]); await p.mouse.down(); await p.mouse.move(d2[0], d2[1], { steps: 5 }); await p.mouse.up();
     return sq && await ev(() => DM.selected().shape === 'dashed');
   });
-  await t('Shape panel: change type, colour, outline only, thickness', async () => {
-    await click('[data-shape="star"]'); await click('[data-k="item.outline"] + span').catch(() => {});
-    return ev(() => DM.selected().shape === 'star');
+  await t('Shape panel: shape dropdown, gradient colour, swap, outline only, thickness', async () => {
+    await p.selectOption('[data-shapesel]', 'star'); await wait(200);
+    await click('[data-seg="item.paint"][data-val="grad"]'); await wait(200);
+    await click('[data-seg="item.gtype"][data-val="radial"]'); await wait(200);
+    const c1 = await ev(() => DM.selected().color); await click('[data-act="shapeSwap"]');
+    const swapped = await ev((c) => DM.selected().color2 === c, c1);
+    await click('[data-k="item.outline"] + span');
+    await p.fill('[data-k="item.thick"]', '6'); await p.dispatchEvent('[data-k="item.thick"]', 'change');
+    const r = await ev(() => { const i = DM.selected(); return i.shape === 'star' && i.paint === 'grad' && i.gtype === 'radial' && i.outline === true && i.thick === 6; });
+    await click('[data-seg="item.paint"][data-val="solid"]'); await click('[data-k="item.outline"] + span');
+    return (r && swapped) || `panel=${r} swapped=${swapped}`;
+  });
+  await t('Shape drawn from outside a thin piece lands on it (cover the neck rib)', async () => {
+    const id = await ev(() => DM.garment.pieces.find(q => /neck/i.test(q.id) && !q.insideOnly).id);
+    await click('#shapesBtn'); await click('#shapesMenu [data-drawshape="rect"]');
+    const r = await ev((id) => { const pc = DM.garment.pieces.find(q => q.id === id); return [pc.sx - 4, pc.sy - 6, pc.sx + pc.w + 4, pc.sy + pc.h + 6]; }, id);
+    const a = await patPt(r[0], r[1]), c = await patPt(r[2], r[3]);
+    await p.mouse.move(a[0], a[1]); await p.mouse.down(); await p.mouse.move(c[0], c[1], { steps: 6 }); await p.mouse.up(); await wait(300);
+    return ev((id) => { const i = DM.selected(); return i?.type === 'shape' && i.piece === id; }, id) || 'shape not on the neck rib';
+  });
+  await t('3D preview is view-only: dragging on it never moves or selects prints', async () => {
+    const before = await ev(() => JSON.stringify([DM.selIds, DM.doc.items.map(i => [i.piece, i.x, i.y])]));
+    const g = await p.locator('#gl').boundingBox();
+    for (const [fx, fy] of [[0.5, 0.42], [0.45, 0.55]]) { await p.mouse.move(g.x + g.width * fx, g.y + g.height * fy); await p.mouse.down(); await p.mouse.move(g.x + g.width * fx + 90, g.y + g.height * fy + 20, { steps: 5 }); await p.mouse.up(); await wait(300); }
+    const after = await ev(() => JSON.stringify([DM.selIds, DM.doc.items.map(i => [i.piece, i.x, i.y])]));
+    await click('#resetViewBtn');
+    return before === after || 'a print moved or the selection changed';
   });
   await t('Esc cancels a shape tool', async () => { await click('#shapesBtn'); await click('#shapesMenu [data-drawshape="circle"]'); await p.keyboard.press('Escape'); return ev(() => DM.editor.tool === 'select'); });
   /* ---------------- pattern interactions ---------------- */

@@ -84,7 +84,7 @@ function bindModels() {
 const TOUR = [
   { el: '[data-tab="design"]', alt: '#tabDesign .add-grid', title: 'Add your artwork', text: 'Upload an image or type text. It lands on the pattern, ready to place. Tip: copy a picture anywhere and paste it here with Ctrl+V.' },
   { el: '#patternPane', title: 'Place it on the pattern', text: 'Drag, scale and rotate your design right on the cut pieces. Outside or inside: print anywhere, even on the label.' },
-  { el: '#viewPane', title: 'Check it in 3D', text: 'Drag to turn the garment, scroll to zoom. Every change shows up live — and you can drag prints right on the 3D garment.' },
+  { el: '#viewPane', title: 'Check it in 3D', text: 'Drag to turn the garment, scroll to zoom. Every change shows up live.' },
   { el: '#qualityBtn', title: 'Adjust the 3D quality', text: 'Adaptive keeps the 3D smooth on any computer: lighter while it turns, sharp as soon as it stops. You can also pick Full, Half or Quarter. Renders and exports are always full quality.' },
   { el: '#garmentBtn', title: 'Switch the model', text: 'T-shirts, long sleeves, hoodies, sweatshirts, totes and real 3D models. Your design comes along.' },
   { el: '.split-btn', title: 'Export your work', text: 'Download 3D snapshots, photoreal studio renders, print files, sublimation panels, a spec sheet of your design and turntable videos.' },

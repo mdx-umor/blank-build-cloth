@@ -3,7 +3,7 @@ import { buildGarment, GARMENT_LIST, garmentThumbSVG, isModelGarment, modelLoade
 import { Studio, GOBOS, goboCanvas } from './scene.js';
 import { PatternEditor, CropSession } from './editor.js';
 import { FABRICS, WASHES, SWATCHES, buildOverlays } from './fabric.js';
-import { FONTS, SHAPES, isLine, imageSource, itemRaster, drawFabric, drawArtwork, prepareOverlayTint, itemHeight, trimTransparent, removeBackground, itemCorners, hitItem, imageAspect, gradientStops, gradientCss, piecePath } from './atlas.js';
+import { FONTS, SHAPES, isLine, imageSource, itemRaster, drawFabric, drawArtwork, prepareOverlayTint, itemHeight, trimTransparent, removeBackground, itemCorners, imageAspect, gradientStops, gradientCss, piecePath } from './atlas.js';
 import { uid, clamp, download, readFileAsDataURL, readFileAsText, loadImage, makeCanvas, debounce, slug, luminance, pointInPoly } from './util.js';
 import * as store from './store.js';
 import { readPicture, sniff, ImportError } from './importer.js';
@@ -300,7 +300,7 @@ function addText(at) {
 }
 function makeShape(shape, extra = {}) {
   const line = isLine(shape);
-  return { type: 'shape', shape, color: luminance(app.doc.fabric.color) > 0.5 ? '#1f2330' : '#ffffff', outline: false, thick: line ? 4 : 3, dashed: shape === 'dashed', name: SHAPES.find(s => s.id === shape)?.name || 'Shape', w: 10, h: line ? 0.4 : 10, ...extra };
+  return { type: 'shape', shape, color: luminance(app.doc.fabric.color) > 0.5 ? '#1f2330' : '#ffffff', color2: '#5b5bd6', paint: 'solid', outline: false, thick: line ? 4 : 3, dashed: shape === 'dashed', name: SHAPES.find(s => s.id === shape)?.name || 'Shape', w: 10, h: line ? 0.4 : 10, ...extra };
 }
 function addShape(shape = 'rect') { addItem(makeShape(shape)); }
 function deleteSel() { const ids = new Set(app.selIds); if (!ids.size) return; app.doc.items = app.doc.items.filter(i => !ids.has(i.id)); app.selIds = []; app.itemsChanged(false); renderDesign(); commit(); }
@@ -380,6 +380,7 @@ const SHAPE_ICON = {
   line: '<path d="M3 16L17 4"/>', dashed: '<path d="M3 16L17 4" stroke-dasharray="2.5 2"/>', round: '<rect x="3" y="5" width="14" height="10" rx="3.5"/>',
   heart: '<path d="M10 16s-6-3.6-6-8a3.3 3.3 0 016-1.9A3.3 3.3 0 0116 8c0 4.4-6 8-6 8z"/>', badge: '<circle cx="10" cy="10" r="6.5" stroke-dasharray="2 1"/>',
 };
+const shapeSvgSolid = (id) => `<svg viewBox="0 0 20 20"><g fill="${isLine(id) ? 'none' : 'currentColor'}" stroke="currentColor" stroke-width="${isLine(id) ? 1.8 : 0.6}" stroke-linejoin="round" stroke-linecap="round">${SHAPE_ICON[id] || SHAPE_ICON.rect}</g></svg>`;
 const shapeSvg = (id) => `<svg viewBox="0 0 20 20"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">${SHAPE_ICON[id] || SHAPE_ICON.rect}</g></svg>`;
 const alignIcon = (k) => {
   const P = { l: 'M4 3v14M7 7h9M7 13h6', c: 'M10 3v14M5 7h10M7 13h6', r: 'M16 3v14M4 7h9M7 13h6', t: 'M3 4h14M7 7v9M13 7v6', m: 'M3 10h14M7 5v10M13 7v6', b: 'M3 16h14M7 4v9M13 7v6' }[k];
@@ -406,7 +407,7 @@ function swatchRow(k, list, title = 'Colour') {
 }
 function toggleRow(k, label, def = false) { const v = get(k) ?? def; return `<div class="trow"><span>${label}</span><label class="toggle"><input type="checkbox" data-k="${k}" ${v ? 'checked' : ''} aria-label="${label}"><span></span></label></div>`; }
 function selectRow(k, label, options) { const v = get(k); return `<div class="row"><label>${label}</label><div class="ctl"><select data-k="${k}" aria-label="${label}">${options.map(([val, name]) => `<option value="${esc(val)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(name)}</option>`).join('')}</select></div></div>`; }
-function segRow(k, label, options) { const v = get(k); return `<div class="row"><label>${label}</label><div class="ctl"><div class="seg small" style="flex:1">${options.map(([val, name]) => `<button data-seg="${k}" data-val="${esc(val)}" class="${String(v) === String(val) ? 'on' : ''}" style="flex:1">${name}</button>`).join('')}</div></div></div>`; }
+function segRow(k, label, options) { const v = get(k) ?? options[0][0]; return `<div class="row"><label>${label}</label><div class="ctl"><div class="seg small" style="flex:1">${options.map(([val, name]) => `<button data-seg="${k}" data-val="${esc(val)}" class="${String(v) === String(val) ? 'on' : ''}" style="flex:1">${name}</button>`).join('')}</div></div></div>`; }
 const sec = (title, body, act = '') => `<div class="sec"><h4>${title}${act}</h4>${body}</div>`;
 
 /* ---------- Design tab ---------- */
@@ -420,7 +421,7 @@ function renderDesign() {
       <button data-add="text">${ICON.text}Text</button>
       <button data-add="shapes">${ICON.shape}Shape</button>
     </div>
-    <div class="hintline" style="margin-top:8px">You can drag a PNG/JPG/SVG straight onto the pattern or the 3D garment, or paste one with Ctrl+V. Anything past the edge of a piece is trimmed, just like cut-and-sew printing.</div>`);
+    <div class="hintline" style="margin-top:8px">You can drag a PNG/JPG/SVG/PDF straight onto the pattern, or paste one with Ctrl+V. Anything past the edge of a piece is trimmed, just like cut-and-sew printing.</div>`);
   html += `<div id="selSec">${selectedHTML()}</div>`;
   html += `<div class="sec"><h4>Layers <button class="act" data-add="image" title="Add an image">＋ Image</button></h4><div class="hintline" style="margin:-6px 0 6px">Drag to change the layer order</div><div class="layers" id="layers"></div></div>`;
   $('#tabDesign').innerHTML = html;
@@ -437,7 +438,7 @@ function selectedHTML() {
       <div class="row"><label>Align</label><div class="ctl ibar">${['l', 'c', 'r', 't', 'm', 'b'].map(k => `<button class="ib" data-align="${k}" title="${ALIGN_NAMES[k]}">${alignIcon(k)}</button>`).join('')}</div></div>
       <div class="btngrid"><button class="btn" data-act="flip">Mirror</button><button class="btn" data-act="dup">Copy</button><button class="btn danger" data-act="del">Delete</button></div>`);
   }
-  if (!it) return sec('Selected item', `<div class="empty">Nothing selected. Click artwork on the pattern or on the 3D garment, or add an image or text.</div>${placeChips(false)}`);
+  if (!it) return sec('Selected item', `<div class="empty">Nothing selected. Click artwork on the pattern, or add an image or text.</div>${placeChips(false)}`);
   const p = app.garment.pieces.find(p => p.id === it.piece);
   const unit = app.unit();
   const num = (key, label, val, suf, step = 0.1, extra = '') => `<label class="numf">${label}<span class="num-u"><input type="number" data-num="${key}" step="${step}" value="${val}" ${extra} aria-label="${label}"><span>${suf}</span></span></label>`;
@@ -448,7 +449,7 @@ function selectedHTML() {
     <div class="numrow">${num('x', 'From centre', app.fmtLen(it.x - p.w / 2), unit)}${num('y', 'From top', app.fmtLen(it.y - hcm / 2), unit)}</div>
     <div class="row"><div class="ctl ibar"><button class="btn sm" data-act="rotL" title="Rotate 90° left">↺ 90°</button><button class="btn sm" data-act="rotR" title="Rotate 90° right">↻ 90°</button><span class="hintline" style="margin:0">Or drag outside a corner</span></div></div>
     <div class="row"><div class="ctl ibar" role="group" aria-label="Align to the piece">${['l', 'c', 'r', 't', 'm', 'b'].map(k => `<button class="ib" data-align="${k}" title="${ALIGN_NAMES[k]}">${alignIcon(k)}</button>`).join('')}</div></div>
-    <div class="hintline">On <b>${esc(p?.label || '')}${(it.face || 'out') === 'in' && !p?.insideOnly ? ' · inside' : ''}</b>. Drag it on the pattern or straight on the 3D garment.</div>`);
+    <div class="hintline">On <b>${esc(p?.label || '')}${(it.face || 'out') === 'in' && !p?.insideOnly ? ' · inside' : ''}</b>. Drag it on the pattern.</div>`);
   let tools = '';
   if (it.type === 'text') {
     const f = FONTS.find(f => f.family === it.font) || FONTS[0];
@@ -470,10 +471,21 @@ function selectedHTML() {
     if (it.stroke) tools += colorRow('item.strokeColor', 'Outline colour');
     tools += `<div class="btngrid"><button class="btn ${it.flip ? 'on' : ''}" data-act="flip">Mirror</button><button class="btn" data-act="dup">Copy</button><button class="btn danger" data-act="del">Delete</button></div>`;
   } else if (it.type === 'shape') {
-    tools += `<div class="btngrid" style="grid-template-columns:repeat(4,1fr)">${SHAPES.map(s => `<button class="btn ${it.shape === s.id ? 'on' : ''}" data-shape="${s.id}" title="${s.name}">${shapeSvg(s.id)}</button>`).join('')}</div>`;
-    tools += colorRow('item.color', 'Shape colour');
-    if (!isLine(it.shape)) tools += toggleRow('item.outline', 'Outline only');
-    if (isLine(it.shape) || it.outline) { tools += slider('item.thick', 'Thickness, mm', 0.5, 30, 0.5, { suf: ' mm' }); tools += toggleRow('item.dashed', 'Dashed'); }
+    // shape · colour (solid or gradient) · outline only · thickness — as in the original
+    tools += `<div class="shape-row"><select data-shapesel aria-label="Shape">${SHAPES.map(sh => `<option value="${sh.id}" ${it.shape === sh.id ? 'selected' : ''}>${sh.name}</option>`).join('')}</select>
+      <input type="color" data-k="item.color" value="${it.color || '#000000'}" aria-label="Shape colour" title="Shape colour">${eyeBtn('item.color')}</div>`;
+    if (!isLine(it.shape)) {
+      tools += segRow('item.paint', 'Colour', [['solid', 'Solid'], ['grad', 'Gradient']]);
+      if (it.paint === 'grad') {
+        tools += colorRow('item.color2', 'Second colour');
+        tools += segRow('item.gtype', 'Type', [['linear', 'Linear'], ['radial', 'Radial']]);
+        if ((it.gtype || 'linear') === 'linear') tools += slider('item.gangle', 'Angle', 0, 360, 1, { suf: '°', def: 90 });
+        tools += `<button class="btn sm block" data-act="shapeSwap">Swap colours</button>`;
+      }
+      tools += toggleRow('item.outline', 'Outline only');
+    }
+    tools += slider('item.thick', 'Thickness, mm', 0.5, 30, 0.5, { suf: ' mm' });
+    if (isLine(it.shape) || it.outline) tools += toggleRow('item.dashed', 'Dashed');
     tools += `<div class="btngrid"><button class="btn ${it.flip ? 'on' : ''}" data-act="flip">Mirror</button><button class="btn" data-act="dup">Copy</button><button class="btn danger" data-act="del">Delete</button></div>`;
   } else if (it.type === 'image') {
     const [pw, ph] = it.px || [0, 0], cr = it.crop || { w: 1 };
@@ -634,7 +646,7 @@ function onValue(path, live) {
   if (scope === 'item') {
     const it = app.selected();
     app.itemsChanged(live);
-    if (!live && ['font', 'shape', 'outline', 'stroke', 'blend', 'fill', 'halftone', 'wrap'].includes(key)) $('#selSec').innerHTML = selectedHTML();
+    if (!live && ['font', 'shape', 'outline', 'stroke', 'blend', 'fill', 'halftone', 'wrap', 'paint', 'gtype'].includes(key)) $('#selSec').innerHTML = selectedHTML();
     if (['text', 'color', 'font'].includes(key)) { renderLayers(); if (key === 'text') $('#tabDesign .hintline').textContent = `«${(it?.text || '').split('\n')[0]}»`; }
   } else if (scope === 'fabric') {
     if (['wash', 'heather', 'washSeed', 'washSize'].includes(key)) rebuildOverlays();
@@ -712,6 +724,14 @@ function bindInspector() {
   };
   root.addEventListener('input', e => handle(e, true));
   root.addEventListener('change', e => handle(e, false));
+  root.addEventListener('change', e => { // shape dropdown
+    if (!e.target.matches('[data-shapesel]')) return;
+    const it = app.selected(); if (!it || it.type !== 'shape') return;
+    const wasLine = isLine(it.shape); it.shape = e.target.value;
+    if (isLine(it.shape)) { it.h = 0.4; it.dashed = it.shape === 'dashed'; } else if (wasLine) it.h = it.w * 0.6;
+    it.name = SHAPES.find(s => s.id === it.shape)?.name;
+    app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); renderLayers(); commit();
+  });
   root.addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.tab) return switchTab(b.dataset.tab);
@@ -749,6 +769,7 @@ function bindInspector() {
       case 'rotL': it.rot = ((it.rot || 0) - 90 + 540) % 360 - 180; break;
       case 'rotR': it.rot = ((it.rot || 0) + 90 + 540) % 360 - 180; break;
       case 'flip': for (const s of sel) s.flip = !s.flip; b.classList.toggle('on'); break;
+      case 'shapeSwap': { const it = app.selected(); if (it) { const c = it.color; it.color = it.color2 || '#ffffff'; it.color2 = c; app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); } return; }
       case 'bold': it.weight = it.weight >= 700 ? 400 : 700; { const f = FONTS.find(f => f.family === it.font); if (f && !f.weights.includes(it.weight)) it.weight = f.weights.reduce((a, w) => Math.abs(w - it.weight) < Math.abs(a - it.weight) ? w : a, f.weights[0]); } app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
       case 'invert': it.invert = !it.invert; b.classList.toggle('on'); app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
       case 'resetColours': delete it.invert; delete it.hue; delete it.sat; it.fill = false; app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
@@ -842,7 +863,7 @@ function onAdd(kind) {
 // shapes menu (toolbar and Artwork section): pick a shape, then draw it on the pattern
 function openShapes(anchor) {
   const m = $('#shapesMenu');
-  m.innerHTML = SHAPES.slice(0, 8).map(s => `<button data-drawshape="${s.id}">${shapeSvg(s.id)}<span>${s.name}</span></button>`).join('') + `<hr>` + SHAPES.slice(8).map(s => `<button data-drawshape="${s.id}">${shapeSvg(s.id)}<span>${s.name}</span></button>`).join('');
+  m.innerHTML = SHAPES.map(s => `<button data-drawshape="${s.id}" class="${editor.tool === 'shape:' + s.id ? 'on' : ''}" title="${s.name}" aria-label="${s.name}">${shapeSvgSolid(s.id)}</button>`).join('');
   $$('.menu').forEach(x => { if (x !== m) x.hidden = true; });
   m.hidden = !m.hidden;
   if (anchor && anchor.closest('#inspector')) { // opened from the inspector: just add the shape at the chosen place
@@ -864,54 +885,10 @@ function setSide(side) {
 
 /* ====================================================================== */
 /* 3D: drag artwork directly on the garment */
-function hitPiece(hit) {
-  if (hit.panel?.piece) return app.garment.pieces.find(p => p.id === hit.panel.piece);
-  const sh = app.garment.sheet;
-  const x = hit.uv.x * sh.w, y = (1 - hit.uv.y) * sh.h;
-  return app.garment.pieces.find(p => !p.insideOnly && pointInPoly(x - p.sx, y - p.sy, p.poly)) || null;
-}
-function bind3DDrag() {
-  const pane = $('#viewPane'), cv = $('#gl');
-  let drag = null;
-  const toSheet = (hit) => { const sh = app.garment.sheet; return [hit.uv.x * sh.w, (1 - hit.uv.y) * sh.h]; };
-  const faceOf = (hit) => hit.panel?.role === 'label' ? 'in' : 'out';
-  const itemAtHit = (hit) => {
-    const [sx, sy] = toSheet(hit), piece = hitPiece(hit);
-    if (!piece) return { it: null };
-    const face = faceOf(hit);
-    let lx = sx - piece.sx, ly = sy - piece.sy;
-    if (face === 'in' && !piece.noMirror) lx = piece.w - lx;
-    for (let i = app.doc.items.length - 1; i >= 0; i--) { const it = app.doc.items[i]; if (it.piece === piece.id && (it.face || 'out') === face && !it.hidden && !it.locked && hitItem(it, app.assets, lx, ly, 0.3)) return { it, lx, ly, piece }; }
-    return { it: null, lx, ly, piece };
-  };
-  pane.addEventListener('pointerdown', e => {
-    if (e.target !== cv || e.button !== 0) return;
-    const hit = studio.pick(e); if (!hit) return;
-    const r = itemAtHit(hit); if (!r.it) return;
-    e.stopPropagation(); e.preventDefault();
-    cv.setPointerCapture(e.pointerId);
-    app.select(r.it.id);
-    if ((r.it.face || 'out') !== editor.face()) setSide(r.it.face || 'out');
-    drag = { it: r.it, dx: r.lx - r.it.x, dy: r.ly - r.it.y, piece: r.piece.id, moved: false };
-  }, true);
-  pane.addEventListener('pointermove', e => {
-    if (!drag) {
-      if (e.target !== cv || e.buttons) return;
-      const hit = studio.pick(e); cv.style.cursor = hit && itemAtHit(hit).it ? 'move' : 'grab'; return;
-    }
-    e.stopPropagation();
-    const hit = studio.pick(e); if (!hit || faceOf(hit) !== (drag.it.face || 'out')) return;
-    const [sx, sy] = toSheet(hit), piece = hitPiece(hit);
-    if (!piece) return;
-    const it = drag.it;
-    if (piece.id !== drag.piece) { drag.piece = piece.id; drag.dx = 0; drag.dy = 0; it.piece = piece.id; }
-    it.x = sx - piece.sx - drag.dx; it.y = sy - piece.sy - drag.dy; drag.moved = true;
-    app.itemsChanged(true);
-  }, true);
-  const end = (e) => { if (!drag) return; e.stopPropagation(); const m = drag.moved; drag = null; if (m) { app.itemsChanged(false); commit(); } };
-  pane.addEventListener('pointerup', end, true);
-  pane.addEventListener('pointercancel', end, true);
-  cv.addEventListener('dblclick', () => { studio.frame(true); });
+// The 3D preview is for looking only: dragging turns the garment, it never selects or moves prints
+// (they are placed on the sewing pattern).
+function bind3DView() {
+  $('#gl').addEventListener('dblclick', () => { studio.frame(true); });
 }
 
 /* ====================================================================== */
@@ -941,10 +918,7 @@ function bindFiles() {
     if (e.target === $('#pat')) {
       const [x, y] = editor.toSheet(e), p = editor.pieceAt(x, y);
       if (p) at = { piece: p.id, x: x - p.sx, y: y - p.sy, face: editor.face() };
-    } else if (e.target === $('#gl')) {
-      const hit = studio.pick(e), p = hit && hitPiece(hit);
-      if (p) { const sh = app.garment.sheet; at = { piece: p.id, x: hit.uv.x * sh.w - p.sx, y: (1 - hit.uv.y) * sh.h - p.sy, face: 'out' }; }
-    }
+    } // dropped anywhere else (also on the 3D view): placed at the chosen "Place at" spot
     for (const f of e.dataTransfer.files) await addImageFile(f, at);
   });
   window.addEventListener('paste', async e => {
@@ -1092,7 +1066,7 @@ function switchGarment(id) { applyGarment(id, { reframe: true }).then(() => comm
 
 /* ====================================================================== */
 async function boot() {
-  bindChrome(); bindInspector(); bind3DDrag(); bindFiles();
+  bindChrome(); bindInspector(); bind3DView(); bindFiles();
   const env = { app, studio, $, $$, toast, busy, withHiResAtlas, rebuildBase, composeAtlas, downloadProject, importProject: () => $('#fileProject').click(), loadDoc, thumbnail, switchGarment, bakeWrapItem: (it, W, H) => bakeWrapLayer(W, H, [it]) };
   initExports(env);
   initHalftone({ app, $, toast, imageSource: (it) => imageSource(it, app.assets, () => app.assetReady()), changed: () => { app.itemsChanged(false); renderDesign(); commit(); } }); initPanels(env);

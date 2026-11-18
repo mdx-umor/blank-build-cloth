@@ -226,6 +226,20 @@ function getDistress() {
   return (distressTile = cv);
 }
 
+/** A shape's paint: its colour, or a linear / radial gradient to its second colour across the shape. */
+export function shapeGradient(it) {
+  if (it.paint !== 'grad' || isLine(it.shape)) return null;
+  const w = it.w, h = it.h, c1 = it.color || '#000000', c2 = it.color2 || '#ffffff';
+  if (it.gtype === 'radial') return { type: 'radial', r: Math.max(w, h) / 2 * 1.05, stops: [[0, c1], [1, c2]] };
+  const a = rad(it.gangle ?? 90), dx = Math.cos(a), dy = Math.sin(a), half = Math.abs(dx) * w / 2 + Math.abs(dy) * h / 2;
+  return { type: 'linear', x1: -dx * half, y1: -dy * half, x2: dx * half, y2: dy * half, stops: [[0, c1], [1, c2]] };
+}
+function shapePaint(c, it) {
+  const g = shapeGradient(it); if (!g) return it.color;
+  const gr = g.type === 'radial' ? c.createRadialGradient(0, 0, 0, 0, 0, g.r) : c.createLinearGradient(g.x1, g.y1, g.x2, g.y2);
+  for (const [o, col] of g.stops) gr.addColorStop(o, col);
+  return gr;
+}
 /** Draws one item, with ctx in piece-local cm space. */
 export function drawItem(c, it, assets, onReady, pxPerCm = 10) {
   if (it.hidden) return;
@@ -246,11 +260,12 @@ export function drawItem(c, it, assets, onReady, pxPerCm = 10) {
     } else if (it.type === 'shape') {
       shapePath(cx, it.shape, it.w, it.h);
       const lw = (it.thick || 3) / 10;
+      const paint = shapePaint(cx, it);
       if (isLine(it.shape) || it.outline) {
-        cx.lineWidth = lw; cx.strokeStyle = it.color; cx.lineJoin = 'round'; cx.lineCap = 'round';
+        cx.lineWidth = lw; cx.strokeStyle = paint; cx.lineJoin = 'round'; cx.lineCap = 'round';
         if (it.dashed || it.shape === 'dashed') cx.setLineDash([lw * 3, lw * 2.2]);
         cx.stroke();
-      } else { cx.fillStyle = it.color; cx.fill(); }
+      } else { cx.fillStyle = paint; cx.fill(); }
     }
   };
   if (it.distress) {

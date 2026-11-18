@@ -70,6 +70,23 @@ export class PatternEditor {
   // piece-local "display" coordinates: in the inside view pieces are mirrored (seen from inside)
   mirrorOf(p) { return this.inside && !p.noMirror; }
   localPoly(p) { return this.mirrorOf(p) ? p.poly.map(([x, y]) => [p.w - x, y]) : p.poly; }
+  // the piece a drawn shape belongs to: the one under its middle, else the one it covers most (a rectangle drawn
+  // over a thin neck rib starts and ends off the rib), else none
+  pieceUnder(x0, y0, x1, y1, line = false) {
+    const mid = this.pieceAt((x0 + x1) / 2, (y0 + y1) / 2);
+    if (mid) return mid;
+    let best = null, bestN = 0;
+    for (const p of this.visiblePieces()) {
+      const poly = this.localPoly(p); let n = 0;
+      for (let i = 0; i <= 16; i++) for (let j = 0; j <= (line ? 0 : 16); j++) {
+        const x = line ? x0 + (x1 - x0) * i / 16 : Math.min(x0, x1) + Math.abs(x1 - x0) * i / 16;
+        const y = line ? y0 + (y1 - y0) * i / 16 : Math.min(y0, y1) + Math.abs(y1 - y0) * j / 16;
+        if (pointInPoly(x - p.sx, y - p.sy, poly)) n++;
+      }
+      if (n > bestN) { bestN = n; best = p; }
+    }
+    return best;
+  }
   pieceAt(x, y) { return this.visiblePieces().find(p => pointInPoly(x - p.sx, y - p.sy, this.localPoly(p))); }
   piece(id) { return this.g.pieces.find(p => p.id === id); }
   face() { return this.inside ? 'in' : 'out'; }
@@ -131,10 +148,8 @@ export class PatternEditor {
     if (e.button === 1 || e.button === 2 || this.space || this.tool === 'hand') { this.drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, ox: this.view.ox, oy: this.view.oy }; this.cursor(); return; }
     if (e.button !== 0) return;
     if (this.crop) { if (!this.crop.down(e)) this.app.endCrop(true); this.redraw(); return; }
-    if (this.tool.startsWith('shape:')) {
-      const p = this.pieceAt(x, y);
-      if (!p) { this.app.toast?.('Start the shape on a pattern piece.'); return; }
-      this.drag = { mode: 'draw', shape: this.tool.slice(6), piece: p, x0: x, y0: y, x1: x, y1: y };
+    if (this.tool.startsWith('shape:')) { // draw anywhere: the shape goes on the piece it covers most
+      this.drag = { mode: 'draw', shape: this.tool.slice(6), x0: x, y0: y, x1: x, y1: y };
       return;
     }
     const h = this.handleAt(e);
@@ -233,15 +248,13 @@ export class PatternEditor {
     if (d.mode === 'pan') { this.cursor(); this.redraw(); return; }
     if (d.mode === 'box') { this.app.setSelection(this.app.selIds); this.redraw(); return; }
     if (d.mode === 'draw') {
-      const p = d.piece, mx = this.mirrorOf(p);
-      let w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
-      if (d.shape === 'line' || d.shape === 'dashed') {
-        const L = Math.hypot(d.x1 - d.x0, d.y1 - d.y0);
-        if (L > 0.4) this.app.addShapeAt(d.shape, p.id, (d.x0 + d.x1) / 2 - p.sx, (d.y0 + d.y1) / 2 - p.sy, L, 0.4, deg(Math.atan2(d.y1 - d.y0, d.x1 - d.x0)));
-      } else if (w > 0.4 && h > 0.4) {
-        this.app.addShapeAt(d.shape, p.id, (d.x0 + d.x1) / 2 - p.sx, (d.y0 + d.y1) / 2 - p.sy, w, h, 0);
-      }
-      if (mx) { /* positions are already in the mirrored (inside) display space */ }
+      const line = d.shape === 'line' || d.shape === 'dashed';
+      const w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0), L = Math.hypot(d.x1 - d.x0, d.y1 - d.y0);
+      const big = line ? L > 0.4 : w > 0.4 && h > 0.4;
+      const p = big && this.pieceUnder(d.x0, d.y0, d.x1, d.y1, line);
+      if (big && !p) this.app.toast?.('Draw the shape over a pattern piece.');
+      else if (p && line) this.app.addShapeAt(d.shape, p.id, (d.x0 + d.x1) / 2 - p.sx, (d.y0 + d.y1) / 2 - p.sy, L, 0.4, deg(Math.atan2(d.y1 - d.y0, d.x1 - d.x0)));
+      else if (p) this.app.addShapeAt(d.shape, p.id, (d.x0 + d.x1) / 2 - p.sx, (d.y0 + d.y1) / 2 - p.sy, w, h, 0); // positions are in display space (mirrored inside)
       this.app.setTool('select');
       this.redraw(); return;
     }

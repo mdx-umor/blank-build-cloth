@@ -29,7 +29,7 @@ Legend: ✅ works like the original · ➕ Design Master extra · ⏸ later (acc
 | Piece count | ✅ |
 | Outside / Inside (inside pieces incl. label; prints inside, mirrored like the original) | ✅ |
 | Tools: Select, Hand, Image, Text | ✅ |
-| Shapes: Rectangle, Square, Circle, Triangle, Star, Diamond, Line, Dashed line — drawn by dragging, Shift keeps even, Esc cancels | ✅ (+ rounded, heart, badge ➕) |
+| Shapes tool: icon grid (Rectangle, Square, Circle, Triangle, Star, Diamond, Line, Dashed line); drag to draw — may start off the piece (e.g. a rectangle over the thin neck rib to colour it), it goes on the piece it covers; Shift keeps even, Esc cancels | ✅ (+ rounded, heart, badge ➕) |
 | Units mm / cm / in | ✅ |
 | Rulers (top + left, in the chosen unit) | ✅ |
 | Zoom − / % / + / Fit / Pattern markings | ✅ |
@@ -51,7 +51,7 @@ Legend: ✅ works like the original · ➕ Design Master extra · ⏸ later (acc
 | Auto-rotate, Reset view, double-click recentre | ✅ |
 | Quick toggles: Neck label, Hanger | ✅ |
 | Live preview indicator, "It's 3D — move it" hint | ✅ |
-| Drag prints directly on the 3D garment | ➕ |
+| 3D preview is for viewing only (drag turns the garment; prints are placed on the pattern) | ✅ |
 
 ## Selected item
 | Function | Design Master |
@@ -66,7 +66,7 @@ Legend: ✅ works like the original · ➕ Design Master extra · ⏸ later (acc
 | Wrap over seams (print continues across seams, baked from 3D) | ✅ |
 | Place at: Chest, Left chest logo, Front bottom, Back, Back neck, Right sleeve, Left sleeve, Label, Printed label | ✅ |
 | Text: font, weight 100–900, colour + eyedropper, Bold / Italic / ALL CAPS, paragraph, line height, letter spacing | ✅ (+ curve, outline ➕) |
-| Shape: type, colour, outline only, thickness mm, dashed | ✅ |
+| Shape panel: shape dropdown, colour + eyedropper, Colour Solid / Gradient (second colour, linear / radial, angle, swap colours), outline only, thickness mm, dashed | ✅ |
 | Layers: eye toggle, thumbnail, type ("· inside"), drag order, + button | ✅ (+ lock ➕) |
 | Image: Vectorize / Upscale (AI) | ⏸ needs an AI service |
 | Trim edges, remove background, print-quality DPI, distress, soft ink | ➕ |
