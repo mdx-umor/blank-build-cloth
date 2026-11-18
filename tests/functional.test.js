@@ -28,7 +28,7 @@ fs.mkdirSync(OUT, { recursive: true });
   let errMark = 0;
   async function t(name, fn) {
     const e0 = errs.length;
-    try { const r = await fn(); const ok = r !== false && errs.length === e0; results.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${r && r !== true ? '  — ' + r : ''}${errs.length > e0 ? '  — ' + errs.slice(e0).join(' | ') : ''}`); }
+    try { const r = await fn(); const ok = r !== false && typeof r !== 'string' && errs.length === e0; results.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${r && r !== true ? '  — ' + r : ''}${errs.length > e0 ? '  — ' + errs.slice(e0).join(' | ') : ''}`); }
     catch (e) { results.push(`FAIL  ${name}  — ${e.message.split('\n')[0]}`); }
     console.log(results[results.length - 1]);
     // close anything a failed step left open
@@ -330,7 +330,7 @@ fs.mkdirSync(OUT, { recursive: true });
   });
   await t('Backdrop on/off, shadow, colour, brightness, contrast', async () => {
     await click('[data-k="scene.backdrop"] + span'); const off = await ev(() => DM.studio.wall.visible === false); await click('[data-k="scene.backdrop"] + span');
-    await click('[data-k="scene.shadows"] + span'); const sh = await ev(() => DM.studio.key.castShadow === false); await click('[data-k="scene.shadows"] + span');
+    const sh0 = await ev(() => DM.studio.key.castShadow); await click('[data-k="scene.shadows"] + span'); const sh = await ev((a) => DM.studio.key.castShadow === !a, sh0); await click('[data-k="scene.shadows"] + span');
     await p.click('#tabScene [data-setk="scene.bgColor"][data-val="#d3dccf"]');
     await p.fill('[data-k="scene.bgContrast"]', '1.4'); await p.dispatchEvent('[data-k="scene.bgContrast"]', 'change');
     return off && sh && await ev(() => DM.doc.scene.bgColor === '#d3dccf' && DM.doc.scene.bgContrast === 1.4);

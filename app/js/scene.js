@@ -52,7 +52,9 @@ export function goboCanvas(id, invert = false) {
   const W = '#fff', K = '#000';
   c.fillStyle = K; c.fillRect(0, 0, S, S);
   c.fillStyle = W; c.strokeStyle = W;
-  const blur = (px) => { c.filter = px ? `blur(${px}px)` : 'none'; };
+  // Softness is applied once to the finished picture (blurring every leaf or needle on its own is very slow).
+  let soft = 0, frostLater = 0;
+  const blur = (px) => { soft = Math.max(soft, px || 0); };
   const ink = (col) => { c.fillStyle = col; c.strokeStyle = col; };
   // building blocks
   const windowPanes = () => { for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) c.fillRect(250 + i * 270, 170 + j * 235, 245, 210); };
@@ -66,14 +68,15 @@ export function goboCanvas(id, invert = false) {
     c.lineCap = 'round'; c.lineWidth = 12; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke();
     for (let k = 0; k < 48; k++) { const t = k / 48, px = x + Math.cos(a) * l * t, py = y + Math.sin(a) * l * t, L = 58 * (1 - t * 0.55);
       for (const sgn of [-1, 1]) { c.lineWidth = 7; c.beginPath(); c.moveTo(px, py); c.lineTo(px + Math.cos(a + sgn * 0.7) * L, py + Math.sin(a + sgn * 0.7) * L); c.stroke(); } } };
-  const frost = (strength = 1) => { // feathery frost growing in from the edges of the glass
+  const frost = (strength = 1) => { frostLater = strength; }; // drawn after the softening, so it stays crisp
+  const drawFrost = (strength) => { // feathery frost growing in from the edges of the glass
     const n = makeCanvas(256, 256), x = n.getContext('2d'), im = x.createImageData(256, 256);
     for (let py = 0; py < 256; py++) for (let px = 0; px < 256; px++) {
       const e = Math.min(px, py, 255 - px, 255 - py) / 128, v = Math.abs(Math.sin(px * 0.21 + Math.sin(py * 0.13) * 4) * Math.cos(py * 0.17 + Math.sin(px * 0.11) * 3));
       const a = Math.max(0, Math.min(1, (0.75 - e) * 1.6 + (v - 0.5) * 0.9 + (r() - 0.5) * 0.35)) * strength, i = (py * 256 + px) * 4;
       im.data[i] = im.data[i + 1] = im.data[i + 2] = 0; im.data[i + 3] = a * 210;
     }
-    x.putImageData(im, 0, 0); blur(3); c.drawImage(n, 0, 0, S, S); blur(0);
+    x.putImageData(im, 0, 0); c.filter = 'blur(3px)'; c.drawImage(n, 0, 0, S, S); c.filter = 'none';
   };
   const lattice = (step, w) => { ink(K); c.lineWidth = w; for (let k = -S; k < S * 2; k += step) { c.beginPath(); c.moveTo(k, 0); c.lineTo(k + S, S); c.stroke(); c.beginPath(); c.moveTo(k, S); c.lineTo(k + S, 0); c.stroke(); } };
   const bat = (x, y, s) => { c.save(); c.translate(x, y); c.scale(s, s); c.beginPath(); c.moveTo(0, -6); c.quadraticCurveTo(-12, -16, -34, -10); c.quadraticCurveTo(-28, -2, -30, 6); c.quadraticCurveTo(-20, 0, -14, 6); c.quadraticCurveTo(-8, 2, -4, 10); c.lineTo(0, 4); c.lineTo(4, 10); c.quadraticCurveTo(8, 2, 14, 6); c.quadraticCurveTo(20, 0, 30, 6); c.quadraticCurveTo(28, -2, 34, -10); c.quadraticCurveTo(12, -16, 0, -6); c.fill(); c.restore(); };
@@ -117,8 +120,10 @@ export function goboCanvas(id, invert = false) {
     case 'leadfrost': blur(8); c.fillRect(200, 150, 620, 740); blur(2); lattice(110, 7); blur(0); frost(0.8); break;
     case 'winterforest': { const g = c.createLinearGradient(0, 0, 0, S); g.addColorStop(0, '#fff'); g.addColorStop(1, '#cfcfcf'); c.fillStyle = g; c.fillRect(0, 0, S, S); ink(K); blur(5); for (let i = 0; i < 9; i++) { const x = r() * S; c.fillRect(x, 0, 18 + r() * 26, S); } for (let i = 0; i < 7; i++) fir(r() * S, S + 40, 520 + r() * 300, 260 + r() * 160); break; }
   }
-  c.filter = 'none';
-  if (invert) { c.globalCompositeOperation = 'difference'; c.fillStyle = W; c.fillRect(0, 0, S, S); }
+  c.filter = 'none'; c.globalCompositeOperation = 'source-over';
+  if (soft) { const t = makeCanvas(S, S); t.getContext('2d').drawImage(cv, 0, 0); c.fillStyle = K; c.fillRect(0, 0, S, S); c.filter = `blur(${soft}px)`; c.drawImage(t, 0, 0); c.filter = 'none'; }
+  if (frostLater) drawFrost(frostLater);
+  if (invert) { c.globalCompositeOperation = 'difference'; c.fillStyle = W; c.fillRect(0, 0, S, S); c.globalCompositeOperation = 'source-over'; }
   goboCache.set(key, cv);
   return cv;
 }
