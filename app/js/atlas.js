@@ -1,7 +1,8 @@
 // Design Master — compositor. The pattern sheet is both the 2D editor surface and the 3D
 // texture atlas. Everything is drawn in centimetres; callers choose the pixel density.
-import { makeCanvas, affMul, affInv, affApply, loadImage, rad, hexToRgb, fbm, mulberry } from './util.js';
+import { makeCanvas, affMul, affInv, affApply, loadImage, rad, hexToRgb, fbm, mulberry, mixHex } from './util.js';
 import { tintedMask } from './fabric.js';
+import { halftoneCanvas, htOptions, shirtColour } from './halftone.js';
 
 export const FONTS = [
   { family: 'Inter', weights: [100, 200, 300, 400, 500, 600, 700, 800, 900] },
@@ -78,7 +79,7 @@ function hueSatMatrix(hueDeg, s) {
 export function imageSource(it, assets, onReady, hi = false) {
   const img = getImage(assets, it.asset, onReady);
   if (!img || !hasAdjust(it)) return img;
-  const key = JSON.stringify([it.asset, it.crop, it.invert, it.hue, it.sat, it.fill && it.fillColor, it.halftone && [it.halftoneSize, Math.round(it.w)], hi]);
+  const key = JSON.stringify([it.asset, it.crop, it.invert, it.hue, it.sat, it.fill && it.fillColor, it.halftone && [htOptions(it), shirtColour(), Math.round(it.w * 10)], hi]);
   const ck = it.id + (hi ? ':hi' : '');
   const hit = procCache.get(ck);
   if (hit && hit.key === key) return hit.cv;
@@ -104,38 +105,9 @@ export function imageSource(it, assets, onReady, hi = false) {
     }
     c.putImageData(im, 0, 0);
   }
-  if (it.halftone) halftone(cv, it, cv.width / Math.max(0.1, it.w));
-  procCache.set(ck, { key, cv });
-  return cv;
-}
-// colour halftone: the artwork becomes a grid of round dots (rotated 22.5°), sized by its coverage
-function halftone(cv, it, pxPerCm) {
-  const W = cv.width, H = cv.height;
-  const src = cv.getContext('2d').getImageData(0, 0, W, H).data;
-  const cell = Math.max(3, (it.halftoneSize || 2) / 10 * pxPerCm);
-  const out = cv.getContext('2d');
-  out.clearRect(0, 0, W, H);
-  const ang = rad(22.5), ca = Math.cos(ang), sa = Math.sin(ang);
-  const R = Math.hypot(W, H);
-  for (let gy = -R; gy < R; gy += cell) for (let gx = -R; gx < R; gx += cell) {
-    const x = W / 2 + gx * ca - gy * sa, y = H / 2 + gx * sa + gy * ca;
-    if (x < -cell || y < -cell || x > W + cell || y > H + cell) continue;
-    let r = 0, g = 0, b = 0, a = 0, n = 0;
-    const s = Math.max(1, Math.floor(cell / 3));
-    for (let oy = -cell / 2; oy < cell / 2; oy += s) for (let ox = -cell / 2; ox < cell / 2; ox += s) {
-      const px = Math.round(x + ox), py = Math.round(y + oy);
-      n++;
-      if (px < 0 || py < 0 || px >= W || py >= H) continue;
-      const i = (py * W + px) * 4, al = src[i + 3] / 255;
-      r += src[i] * al; g += src[i + 1] * al; b += src[i + 2] * al; a += al;
-    }
-    if (!a) continue;
-    const cover = a / n;
-    const rad_ = Math.sqrt(cover) * cell * 0.62;
-    if (rad_ < 0.35) continue;
-    out.fillStyle = `rgb(${r / a},${g / a},${b / a})`;
-    out.beginPath(); out.arc(x, y, rad_, 0, Math.PI * 2); out.fill();
-  }
+  const out = it.halftone ? halftoneCanvas(cv, htOptions(it), cv.width / Math.max(0.1, it.w)) : cv;
+  procCache.set(ck, { key, cv: out });
+  return out;
 }
 // aspect ratio of an image item after cropping
 export function imageAspect(it) {
@@ -146,22 +118,23 @@ export function imageAspect(it) {
 /* ---------- text rasteriser (cached) ---------- */
 const textCache = new Map();
 const TF = 160; // px per em in the cache
-export function textRaster(it) {
-  const key = JSON.stringify([it.text, it.font, it.weight, it.italic, it.caps, it.color, it.align, it.lineH, it.letter, it.curve, it.stroke, it.strokeColor, document.fonts?.status]);
-  const hit = textCache.get(it.id);
-  if (hit && hit.key === key) return hit.cv;
+// Text layout shared by the picture on screen and the outlined vector in the print files: where each letter goes,
+// in pixels of a canvas W × H at TF px per em.
+export function layoutText(it) {
   const lines = String(it.caps ? (it.text || '').toUpperCase() : (it.text || '')).split('\n');
   const font = `${it.italic ? 'italic ' : ''}${it.weight || 400} ${TF}px "${it.font || 'Inter'}", sans-serif`;
   const meas = makeCanvas(4, 4).getContext('2d');
   meas.font = font;
   const ls = (it.letter || 0) * TF / 100;
-  const glyphW = (s) => [...s].map(ch => meas.measureText(ch).width + ls);
+  const adv = (ch) => meas.measureText(ch).width;
+  const glyphW = (s) => [...s].map(ch => adv(ch) + ls);
   const lh = TF * (it.lineH || 1.15);
   const strokePx = (it.stroke || 0) * TF / 100;
-  let cv;
   const curve = (it.curve || 0) / 100;
+  const glyphs = [];
+  let W, H;
   if (Math.abs(curve) > 0.01) {
-    // arc text: each line on a concentric arc
+    // arc text: each line on a concentric arc; letters centred on their spot, turned with the arc
     const widths = lines.map(l => glyphW(l).reduce((a, b) => a + b, 0));
     const maxW = Math.max(1, ...widths);
     const total = curve * Math.PI * 1.1; // sweep angle for the longest line
@@ -171,11 +144,7 @@ export function textRaster(it) {
       const r = curve > 0 ? R - li * lh : R + li * lh;
       const gws = glyphW(line), w = gws.reduce((a, b) => a + b, 0);
       let a = -w / 2 / r;
-      [...line].forEach((ch, k) => {
-        const mid = a + gws[k] / 2 / r;
-        placed.push({ ch, a: mid, r });
-        a += gws[k] / r;
-      });
+      [...line].forEach((ch, k) => { placed.push({ ch, a: a + gws[k] / 2 / r, r }); a += gws[k] / r; });
     });
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const pos = placed.map(p => {
@@ -185,39 +154,41 @@ export function textRaster(it) {
       return { ...p, x, y };
     });
     if (!pos.length) { x0 = y0 = 0; x1 = y1 = 10; }
-    cv = makeCanvas(x1 - x0, y1 - y0);
-    const c = cv.getContext('2d');
-    c.font = font; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
-    for (const p of pos) {
-      c.save(); c.translate(p.x - x0, p.y - y0); c.rotate(curve > 0 ? p.a : -p.a);
-      if (strokePx) { c.strokeStyle = it.strokeColor || '#000'; c.lineWidth = strokePx * 2; c.strokeText(p.ch, 0, 0); }
-      c.fillStyle = it.color || '#111'; c.fillText(p.ch, 0, 0);
-      c.restore();
-    }
+    W = x1 - x0; H = y1 - y0;
+    for (const p of pos) glyphs.push({ ch: p.ch, x: p.x - x0, y: p.y - y0, rot: curve > 0 ? p.a : -p.a, mode: 'centre', adv: adv(p.ch) });
   } else {
     const widths = lines.map(l => glyphW(l).reduce((a, b) => a + b, 0) - ls);
-    const W = Math.max(TF * 0.3, ...widths) + strokePx * 2 + TF * 0.1;
-    const H = lh * (lines.length - 1) + TF * 1.25 + strokePx * 2;
-    cv = makeCanvas(W, H);
-    const c = cv.getContext('2d');
-    c.font = font; c.textBaseline = 'alphabetic'; c.lineJoin = 'round';
+    W = Math.max(TF * 0.3, ...widths) + strokePx * 2 + TF * 0.1;
+    H = lh * (lines.length - 1) + TF * 1.25 + strokePx * 2;
     lines.forEach((line, li) => {
       const w = widths[li];
       let x = it.align === 'left' ? strokePx + TF * 0.05 : it.align === 'right' ? W - strokePx - TF * 0.05 - w : (W - w) / 2;
       const y = strokePx + TF * 0.95 + li * lh;
-      for (const ch of line) {
-        if (strokePx) { c.strokeStyle = it.strokeColor || '#000'; c.lineWidth = strokePx * 2; c.strokeText(ch, x, y); }
-        c.fillStyle = it.color || '#111'; c.fillText(ch, x, y);
-        x += meas.measureText(ch).width + ls;
-      }
+      for (const ch of line) { const a = adv(ch); glyphs.push({ ch, x, y, rot: 0, mode: 'baseline', adv: a }); x += a + ls; }
     });
+  }
+  return { W, H, glyphs, font, TF, strokePx };
+}
+export function textRaster(it) {
+  const key = JSON.stringify([it.text, it.font, it.weight, it.italic, it.caps, it.color, it.align, it.lineH, it.letter, it.curve, it.stroke, it.strokeColor, document.fonts?.status]);
+  const hit = textCache.get(it.id);
+  if (hit && hit.key === key) return hit.cv;
+  const L = layoutText(it);
+  const cv = makeCanvas(L.W, L.H), c = cv.getContext('2d');
+  c.font = L.font; c.lineJoin = 'round';
+  for (const g of L.glyphs) {
+    c.save(); c.translate(g.x, g.y); if (g.rot) c.rotate(g.rot);
+    c.textAlign = g.mode === 'centre' ? 'center' : 'left'; c.textBaseline = g.mode === 'centre' ? 'middle' : 'alphabetic';
+    if (L.strokePx) { c.strokeStyle = it.strokeColor || '#000'; c.lineWidth = L.strokePx * 2; c.strokeText(g.ch, 0, 0); }
+    c.fillStyle = it.color || '#111'; c.fillText(g.ch, 0, 0);
+    c.restore();
   }
   textCache.set(it.id, { key, cv });
   return cv;
 }
 
 /* ---------- shapes ---------- */
-function shapePath(c, s, w, h) {
+export function shapePath(c, s, w, h) {
   c.beginPath();
   const x = -w / 2, y = -h / 2;
   switch (s) {
@@ -304,8 +275,19 @@ export function drawItem(c, it, assets, onReady, pxPerCm = 10) {
 /* ---------- fabric gradient: up to 5 stops, position 0 = top ---------- */
 export function gradientStops(fabric) {
   const st = (fabric.stops?.length >= 2 ? fabric.stops : [{ p: 0, c: fabric.color || '#ffffff' }, { p: 1, c: fabric.color2 || '#000000' }]);
-  return [...st].map(s => ({ p: Math.max(0, Math.min(1, +s.p || 0)), c: s.c })).sort((a, b) => a.p - b.p);
+  return [...st].map(s => ({ p: Math.max(0, Math.min(1, +s.p || 0)), c: s.c, ...(s.m != null ? { m: s.m } : {}) })).sort((a, b) => a.p - b.p);
 }
+// stops to draw, with each midpoint (where the blend is half-way, default in the middle) as an extra stop
+export function expandStops(st) {
+  const out = [];
+  st.forEach((s, i) => {
+    out.push({ p: s.p, c: s.c });
+    const nx = st[i + 1];
+    if (nx && s.m != null && Math.abs(s.m - 0.5) > 0.001) out.push({ p: s.p + s.m * (nx.p - s.p), c: mixHex(s.c, nx.c, 0.5) });
+  });
+  return out;
+}
+export const gradientCss = (st) => `linear-gradient(90deg, ${expandStops(st).map(s => `${s.c} ${(s.p * 100).toFixed(1)}%`).join(', ')})`;
 
 /* ---------- pieces ---------- */
 export function piecePath(c, piece) {
@@ -321,7 +303,7 @@ export const faceMatrix = (pn, piece) => [pn.toLocal[0], pn.toLocal[1], pn.toLoc
  * Fabric layer: base colour/gradient + wash overlays + stitches, per piece, in sheet cm.
  * c must already be scaled to cm. Returns nothing.
  */
-export function drawFabric(c, garment, fabric, overlays, { fillSheet = false } = {}) {
+export function drawFabric(c, garment, fabric, overlays, { fillSheet = false, washOnly = false } = {}) {
   const base = fabric.color || '#ffffff';
   if (fillSheet) { c.fillStyle = base; c.fillRect(-2, -2, garment.sheet.w + 4, garment.sheet.h + 4); }
   const b = garment.model ? garment.washBounds : garment.bounds;
@@ -333,11 +315,11 @@ export function drawFabric(c, garment, fabric, overlays, { fillSheet = false } =
       const a = rad(fabric.angle ?? 90), dx = Math.cos(a), dy = Math.sin(a);
       const half = Math.abs(dx) * b.w / 2 + Math.abs(dy) * b.h / 2;
       const g = c.createLinearGradient(b.cx - dx * half, b.cy + dy * half, b.cx + dx * half, b.cy - dy * half);
-      for (const s of stops) g.addColorStop(s.p, s.c); return g;
+      for (const s of expandStops(stops)) g.addColorStop(s.p, s.c); return g;
     }
     if (fabric.mode === 'radial') {
       const g = c.createRadialGradient(b.cx, b.y0 + b.h * 0.6, 0, b.cx, b.y0 + b.h * 0.6, Math.max(b.w, b.h) * 0.62);
-      for (const s of stops) g.addColorStop(s.p, s.c); return g;
+      for (const s of expandStops(stops)) g.addColorStop(s.p, s.c); return g;
     }
     return base;
   };
@@ -358,16 +340,16 @@ export function drawFabric(c, garment, fabric, overlays, { fillSheet = false } =
       // curved (sleeve) faces: clip to their half of the pattern piece, draw in approximate garment space
       c.translate(piece.sx, piece.sy);
       c.beginPath(); pn.localPoly.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath();
-      c.lineWidth = 0.6; c.strokeStyle = fabric.pieceColors?.[pn.piece] || base; c.stroke(); c.clip();
+      if (!washOnly) { c.lineWidth = 0.6; c.strokeStyle = fabric.pieceColors?.[pn.piece] || base; c.stroke(); }
+      c.clip();
       c.transform(...pn.fit);
-      c.fillStyle = fillFor(c, pn.piece); c.fillRect(b.x0 - 60, b.y0 - 60, b.w + 120, b.h + 120);
+      if (!washOnly) { c.fillStyle = fillFor(c, pn.piece); c.fillRect(b.x0 - 60, b.y0 - 60, b.w + 120, b.h + 120); }
       drawOverlay(pn);
     } else {
       c.transform(...faceMatrix(pn, piece));
       c.beginPath(); pn.outline.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath();
       c.lineWidth = 0.6; // tiny overdraw hides anti-alias seams between faces
-      const fill = fillFor(c, pn.piece);
-      c.fillStyle = fill; c.strokeStyle = fill; c.fill(); c.stroke();
+      if (!washOnly) { const fill = fillFor(c, pn.piece); c.fillStyle = fill; c.strokeStyle = fill; c.fill(); c.stroke(); }
       c.clip(); drawOverlay(pn);
     }
     c.restore();
@@ -428,9 +410,9 @@ export function renderAtlas(cv, garment, doc, assets, overlays, ppc, onReady) {
 }
 
 /** One print on its own (no position/rotation), for wrap-over-seams projection. */
-export function itemRaster(it, assets, k = 40, onReady) {
+export function itemRaster(it, assets, k = 40, onReady, max = 2048) {
   const h = itemHeight(it, assets);
-  const s = Math.min(k, 2048 / Math.max(it.w, h));
+  const s = Math.min(k, max / Math.max(it.w, h));
   const cv = makeCanvas(it.w * s, h * s), c = cv.getContext('2d');
   c.scale(s, s);
   drawItem(c, { ...it, x: it.w / 2, y: h / 2, rot: 0, flip: false, hidden: false, opacity: 1 }, assets, onReady, s);

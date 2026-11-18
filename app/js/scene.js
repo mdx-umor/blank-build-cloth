@@ -9,6 +9,25 @@ import { buildGarmentGroup, cavityAO } from './mesh.js';
 import { normalMapCanvas, FABRICS } from './fabric.js';
 import { makeCanvas, mulberry, rad, clamp, mixHex } from './util.js';
 
+// the best video encoder this browser offers: H.264 → MP4 first, then VP9 / VP8 → WebM
+async function pickVideoEncoder(width, height, fps) {
+  if (!window.VideoEncoder || !window.VideoFrame) return null;
+  const bitrate = Math.round(Math.min(40e6, Math.max(8e6, width * height * fps * 0.12)));
+  const tries = [
+    ['mp4', 'avc1.640033', { avc: { format: 'avc' } }], ['mp4', 'avc1.4d0033', { avc: { format: 'avc' } }], ['mp4', 'avc1.42003e', { avc: { format: 'avc' } }],
+    ['webm', 'vp09.00.51.08', {}, 'V_VP9'], ['webm', 'vp8', {}, 'V_VP8'],
+  ];
+  for (const [format, codec, extra, mux] of tries) {
+    const config = { codec, width, height, bitrate, framerate: fps, latencyMode: 'quality', ...extra };
+    try {
+      if (!(await VideoEncoder.isConfigSupported(config)).supported) continue;
+      const lib = format === 'mp4' ? await import('../vendor/mp4-muxer.mjs') : await import('../vendor/webm-muxer.mjs');
+      return { format, config, lib, mux };
+    } catch { /* try the next one */ }
+  }
+  return null;
+}
+
 export const GOBOS = [
   { id: 'none', name: 'None' }, { id: 'window', name: 'Window' }, { id: 'arch', name: 'Arched window' },
   { id: 'blinds', name: 'Blinds' }, { id: 'softblinds', name: 'Soft blinds' }, { id: 'leaves', name: 'Leaf shadows' },
@@ -469,37 +488,66 @@ export class Studio {
    * Turntable video: one full turn of the garment, recorded from the WebGL canvas.
    * Returns a Blob (MP4 where the browser can record it, otherwise WebM).
    */
+  /**
+   * One full turn as a video. Where the browser has WebCodecs, every frame is rendered and encoded one by one
+   * (smooth on any computer): H.264 in an MP4 (fast start), or VP9/VP8 in a WebM. Otherwise the canvas is
+   * recorded in real time. Returns { blob, format: 'mp4'|'webm' }.
+   */
   async recordTurntable({ width, height, seconds = 8, fps = 30, onProgress, signal }) {
+    width -= width % 2; height -= height % 2;
+    const enc = await pickVideoEncoder(width, height, fps);
     const r = this.renderer;
-    const types = ['video/mp4;codecs=avc3.42E01E', 'video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
-    const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-    if (!mime) throw new Error('This browser cannot record video.');
     this.paused = true; this.recording = true;
-    const prev = { pr: r.getPixelRatio(), aspect: this.camera.aspect, yaw: this.viewYaw };
+    const prev = { pr: r.getPixelRatio(), yaw: this.viewYaw };
     try {
       r.setPixelRatio(1); r.setSize(width, height, false);
       this.camera.aspect = width / height; this.camera.updateProjectionMatrix();
-      const stream = this.canvas.captureStream(fps);
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
-      const chunks = []; rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      const done = new Promise(res => (rec.onstop = res));
-      rec.start(250);
-      const total = seconds * fps, base = this.viewYaw;
-      for (let f = 0; f <= total; f++) {
-        if (signal?.aborted) break;
-        this.turntable.rotation.y = base + (f / total) * Math.PI * 2;
-        this.controls.update();
-        r.render(this.scene, this.camera);
-        onProgress && onProgress(f, total);
-        await new Promise(res => setTimeout(res, 1000 / fps));
+      const total = Math.round(seconds * fps), base = this.viewYaw;
+      const frameAt = (f) => { this.turntable.rotation.y = base + (f / total) * Math.PI * 2; this.controls.update(); r.render(this.scene, this.camera); };
+      if (!enc) return await this.recordRealtime({ total, fps, frameAt, onProgress, signal });
+      const { Muxer, ArrayBufferTarget } = enc.lib, target = new ArrayBufferTarget();
+      const muxer = enc.format === 'mp4'
+        ? new Muxer({ target, video: { codec: 'avc', width, height, frameRate: fps }, fastStart: 'in-memory' })
+        : new Muxer({ target, video: { codec: enc.mux, width, height, frameRate: fps } });
+      let failed = null;
+      const encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { failed = e; } });
+      encoder.configure(enc.config);
+      for (let f = 0; f < total; f++) {
+        if (signal?.aborted || failed) break;
+        frameAt(f);
+        const frame = new VideoFrame(this.canvas, { timestamp: Math.round(f * 1e6 / fps), duration: Math.round(1e6 / fps) });
+        encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 });
+        frame.close();
+        onProgress && onProgress(f + 1, total);
+        while (encoder.encodeQueueSize > 3) await new Promise(res => setTimeout(res, 4));
+        if (f % 4 === 0) await new Promise(res => setTimeout(res, 0)); // let the page breathe
       }
-      rec.stop(); await done;
-      return new Blob(chunks, { type: mime.split(';')[0] });
+      if (failed) throw failed;
+      await encoder.flush(); encoder.close();
+      muxer.finalize();
+      return { blob: new Blob([target.buffer], { type: enc.format === 'mp4' ? 'video/mp4' : 'video/webm' }), format: enc.format };
     } finally {
       this.viewYaw = prev.yaw; this.turntable.rotation.y = prev.yaw;
-      r.setPixelRatio(prev.pr); this.resize();
-      this.paused = false; this.recording = false; this.dirty = true;
+      r.setPixelRatio(prev.pr); this.recording = false; this.resize();
+      this.paused = false; this.dirty = true;
     }
+  }
+  async recordRealtime({ total, fps, frameAt, onProgress, signal }) {
+    const types = ['video/mp4;codecs=avc3.42E01E', 'video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+    if (!mime) throw new Error('Could not record a video in this browser.');
+    const rec = new MediaRecorder(this.canvas.captureStream(fps), { mimeType: mime, videoBitsPerSecond: 10_000_000 });
+    const chunks = []; rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    const done = new Promise(res => (rec.onstop = res));
+    rec.start(250);
+    for (let f = 0; f <= total; f++) {
+      if (signal?.aborted) break;
+      frameAt(f); onProgress && onProgress(f, total);
+      await new Promise(res => setTimeout(res, 1000 / fps));
+    }
+    rec.stop(); await done;
+    const type = mime.split(';')[0];
+    return { blob: new Blob(chunks, { type }), format: type.includes('mp4') ? 'mp4' : 'webm' };
   }
 
   /**

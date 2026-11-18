@@ -292,7 +292,7 @@ function presetsFor(g) {
   const P = (piece, fx, fy, w, name, face = 'out') => ({ name, piece, fx, fy, w, face });
   const has = (id) => g.pieces.some(p => p.id === id);
   if (g.tote) return [P('front', 0.5, 0.5, 26, 'Front'), P('back', 0.5, 0.5, 26, 'Back')];
-  const list = [P('front', 0.5, 0.33, 25, 'Chest'), P('front', 0.66, 0.24, 9, 'Left chest logo'), P('front', 0.5, 0.8, 20, 'Front bottom'),
+  const list = [P('front', 0.5, 0.33, 26, 'Chest'), P('front', 0.66, 0.24, 9, 'Left chest logo'), P('front', 0.5, 0.8, 20, 'Front bottom'),
     P('back', 0.5, 0.36, 28, 'Back'), P('back', 0.5, 0.1, 7, 'Back neck')];
   if (has('sleeveR')) list.push(P('sleeveR', 0.5, 0.75, 7, 'Right sleeve'));
   if (has('sleeveL')) list.push(P('sleeveL', 0.5, 0.75, 7, 'Left sleeve'));

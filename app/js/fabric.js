@@ -135,18 +135,19 @@ export function buildOverlays(garment, fabric) {
   for (const face of [0, 1]) {
     const cv = makeCanvas(W, H), ctx = cv.getContext('2d'), img = ctx.createImageData(W, H), d = img.data;
     const seed = 11 + face * 31 + (fabric.washSeed || 0) * 7;
+    const zs = 1 / clamp(fabric.washSize || 1, 0.3, 3); // spot size: bigger spots = slower noise
     const rnd = mulberry(seed);
     const drops = [];
     if (wash === 'bleach') {
       for (let i = 0; i < 70; i++) {
         const r = Math.pow(rnd(), 3) * 3.8 + 0.25;
-        drops.push([rect.x0 + rnd() * rect.w, rect.y0 + rnd() * rect.h, r]);
+        drops.push([(rect.x0 + rnd() * rect.w) * zs, (rect.y0 + rnd() * rect.h) * zs, r]);
         if (r > 1.5) for (let k = 0; k < 6; k++) drops.push([drops[drops.length - 1][0] + (rnd() - 0.5) * r * 5, drops[drops.length - 1][1] + (rnd() - 0.5) * r * 5, rnd() * 0.45 + 0.1]);
       }
     }
-    const cx = 0, cy = b.y0 + b.h * 0.55;
+    const cx = 0, cy = (b.y0 + b.h * 0.55) * zs;
     for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
-      const x = rect.x0 + px / ppc, y = rect.y0 + (H - 1 - py) / ppc; // canvas row 0 = top of garment
+      const x = (rect.x0 + px / ppc) * zs, y = (rect.y0 + (H - 1 - py) / ppc) * zs; // canvas row 0 = top of garment
       let L = 0, D = 0, T = 0;
       switch (wash) {
         case 'stone': { const n = fbm(x * 0.07, y * 0.07, 4, seed) * 0.5 + 0.5; L = Math.pow(n, 2.2) * 0.65 + fbm(x * 0.4, y * 0.4, 2, seed + 3) * 0.06; break; }
@@ -163,7 +164,7 @@ export function buildOverlays(garment, fabric) {
         case 'bleach': { for (const [dx, dy, r] of drops) { const dd = Math.hypot(x - dx, y - dy); if (dd < r * 1.5) { const ed = r * (1 + fbm(x * 0.8, y * 0.8, 2, seed) * 0.35); if (dd < ed) L = Math.max(L, 0.92 - (dd / ed) * 0.25); else L = Math.max(L, (1 - (dd - ed) / (r * 0.5)) * 0.4); } } break; }
         case 'tiedye': { const dx = x - cx, dy = y - cy, r = Math.hypot(dx, dy), a = Math.atan2(dy, dx); const band = Math.sin(a * 3 + r * 0.22 + fbm(x * 0.06, y * 0.06, 3, seed) * 2.2); T = smooth(clamp(band * 1.6 + 0.2, 0, 1)); L = smooth(clamp(-band * 3 - 2, 0, 1)) * 0.5; break; }
         case 'crumple': { const n = fbm(x * 0.06, y * 0.06, 5, seed); T = smooth(clamp(n * 3 + 0.5, 0, 1)); L = Math.pow(1 - Math.min(1, Math.abs(n) * 9), 3) * 0.55; break; }
-        case 'dipdye': { const edge = b.y0 + b.h * 0.42 + fbm(x * 0.08, 1, 3, seed) * 6; T = smooth(clamp((edge - y) / 9, 0, 1)); break; }
+        case 'dipdye': { const edge = (b.y0 + b.h * 0.42) * zs + fbm(x * 0.08, 1, 3, seed) * 6; T = smooth(clamp((edge - y) / 9, 0, 1)); break; }
       }
       if (heather) {
         const r = rnd();

@@ -27,6 +27,10 @@ Their code, 3D models and branding were **not** copied.
 
 ## Where things stand
 - Every function of the original is implemented and listed in **`docs/feature-parity.md`** (✅ / ➕ extras / ⏸ later).
+- Deep study (Nov 2026) with Craft Anything + a hands-on walkthrough: **`docs/analysis/blankbuilder-study.md`**
+  (how it's built, their plans/prices, exact dialog behaviour). It added: vector import (SVG/PDF/AI), crop in place,
+  the full Halftone dialog, vector print files (outlined letters, vector PDF/SVG prints), shirt-size scaling,
+  sublimation bleed/cut line/mirror, frame-by-frame MP4 video, render frame preview, wash spot size, gradient midpoints.
 - **71 automated browser tests pass** (`tests/functional.test.js`, Playwright). Each export was checked to download.
 - Not built yet (⏸): log in / plans / payment / cloud render, Vectorize & Upscale (AI), language switcher.
 - The complete English UI text of the original (356 strings = its feature list) is in `docs/original-ui-strings.txt`.
@@ -36,16 +40,19 @@ Their code, 3D models and branding were **not** copied.
 |---|---|
 | `index.html`, `css/app.css` | Page shell: header, pattern pane, 3D pane, inspector (Design / Fabric / Scene tabs), dialogs |
 | `js/main.js` | App state (`window.DM` for debugging), selection (multi), undo/redo, autosave, inspector rendering + events, garment switching, inside/outside, keyboard |
-| `js/editor.js` | 2D pattern editor: rulers, zoom/pan, multi-select + box select, shape drawing, Alt-drag copy, rotate outside corner, inside view (mirrored) |
+| `js/editor.js` | 2D pattern editor: rulers, zoom/pan, multi-select + box select, shape drawing, Alt-drag copy, rotate outside corner, inside view (mirrored), crop in place (`CropSession`) |
 | `js/atlas.js` | Compositor: the pattern sheet **is** the 3D texture. Fabric fill/gradients/washes, artwork, text raster, shapes, image tools (crop, invert, hue, saturation, fill, halftone) |
 | `js/scene.js` | Three.js studio: lights, HDRI (`assets/studio.hdr`), gobos, backdrop, catalogue render (accumulated passes), turntable video (MediaRecorder), **wrap-over-seams GPU bake**, real-model loading (GLB) |
 | `js/mesh.js` | Procedural garments → 3D: hollow shells with open edges, Coons-mapped sleeves, folded hems, neck rib, label, fold-shadow AO |
 | `js/garments.js` | Parametric garments (tee, V-neck, oversize, women's, crop, long sleeve, baseball, tank, sweatshirt, hoodie, tote) + real-model garments, presets ("Place at"), label shapes |
 | `js/fabric.js` | Knit normal maps, materials, washes |
 | `js/exports.js` | Render dialog, snapshot, print files ZIP (SVG+PNG+prints+spec), spec sheet PDF (jsPDF), sublimation panels, video, mockup sheet, colourways, pattern PNG |
-| `js/panels.js` | Your files (IndexedDB), crop dialog, models picker, quick tour |
+| `js/panels.js` | Your files (IndexedDB), models picker, quick tour |
+| `js/importer.js` | Picture import: PNG/JPG/WebP/GIF; SVG, PDF, AI kept as vector (pdf.js); EPS/old-AI messages |
+| `js/halftone.js` | Halftone engine (6 styles × 8 dot shapes) and its dialog |
+| `js/vector.js` | Vector print output: outlined letters (opentype.js + Fontsource fonts), shape paths, nested SVG pictures, vector PDF pictures (pdf-lib) |
 | `js/store.js` | IndexedDB: autosave + saved files |
-| `vendor/` | three.js r170 (+ OrbitControls, GLTFLoader, RGBELoader, meshopt decoder), JSZip, jsPDF — all vendored, no CDN |
+| `vendor/` | three.js r170 (+ OrbitControls, GLTFLoader, RGBELoader, meshopt decoder), JSZip, jsPDF, pdf.js, pdf-lib, opentype.js, mp4-muxer, webm-muxer — all vendored (licences in `vendor/licenses/`) |
 | `models/shirt-ls/` | Real model: long-sleeve button-up shirt (GLB 970 KB + `pieces.json` + thumbnail) |
 
 Key idea: each garment's **pattern pieces map 1:1 onto the 3D UVs**, so artwork placed on the pattern lands exactly on the 3D garment (and vice versa — prints can be dragged on the 3D view).

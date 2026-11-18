@@ -6,7 +6,7 @@
 //         drag a corner square = scale · drag just outside a corner (or the top knob) = rotate
 //         Shift-click = add/remove from the selection · drag on empty sheet = selection box
 //         Shape tools: press on a piece and drag to draw (Shift = even), Esc cancels.
-import { drawItem, piecePath, itemCorners, hitItem, itemHeight } from './atlas.js';
+import { drawItem, piecePath, itemCorners, hitItem, itemHeight, imageAspect, getImage } from './atlas.js';
 import { pointInPoly, clamp, deg, rad, uid } from './util.js';
 
 const HANDLE = 7, RULER = 22;
@@ -130,6 +130,7 @@ export class PatternEditor {
     const [x, y] = this.toSheet(e);
     if (e.button === 1 || e.button === 2 || this.space || this.tool === 'hand') { this.drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, ox: this.view.ox, oy: this.view.oy }; this.cursor(); return; }
     if (e.button !== 0) return;
+    if (this.crop) { if (!this.crop.down(e)) this.app.endCrop(true); this.redraw(); return; }
     if (this.tool.startsWith('shape:')) {
       const p = this.pieceAt(x, y);
       if (!p) { this.app.toast?.('Start the shape on a pattern piece.'); return; }
@@ -160,6 +161,11 @@ export class PatternEditor {
   move(e) {
     if (!this.g) return;
     const d = this.drag;
+    if (this.crop && !d) {
+      if (this.crop.drag) { this.crop.move(e); return; }
+      if (e.target === this.cv) this.cv.style.cursor = this.crop.hover(e);
+      return;
+    }
     if (!d) {
       if (e.target !== this.cv) return;
       const h = this.handleAt(e);
@@ -221,6 +227,7 @@ export class PatternEditor {
     this.app.itemsChanged(true);
   }
   up(e) {
+    if (this.crop?.drag) { this.crop.up(); this.redraw(); return; }
     const d = this.drag; this.drag = null; this.guides = []; this.readout = null;
     if (!d) return;
     if (d.mode === 'pan') { this.cursor(); this.redraw(); return; }
@@ -259,7 +266,9 @@ export class PatternEditor {
   dbl(e) {
     const [x, y] = this.toSheet(e);
     const it = this.itemAt(x, y);
+    if (this.crop) return;
     if (it?.type === 'text') this.app.focusText();
+    else if (it?.type === 'image') this.app.startCrop(it);
     else if (!it) this.fit();
   }
 
@@ -357,7 +366,7 @@ export class PatternEditor {
     // selection frames
     const single = selIds.length === 1;
     for (const sel of this.app.selectedItems()) {
-      if (sel.hidden || (sel.face || 'out') !== face) continue;
+      if (sel.hidden || (sel.face || 'out') !== face || this.crop?.it === sel) continue;
       const hd = this.handlesFor(sel);
       if (!hd.corners) continue;
       c.beginPath(); hd.corners.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p)); c.closePath();
@@ -376,6 +385,7 @@ export class PatternEditor {
         c.fillStyle = '#fff'; c.textAlign = 'center'; c.fillText(txt, bx, by + 22);
       }
     }
+    if (this.crop) this.crop.draw(c);
     this.drawRulers(c, col);
     this.app.onZoom?.();
   }
@@ -412,3 +422,116 @@ export class PatternEditor {
 }
 
 function isTyping(e) { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
+
+/* ---------- crop in place: drag the edges to crop, drag inside to move the picture under the frame ----------
+   The full picture keeps its place on the piece; the frame (in the picture's own unrotated cm, centred on the
+   full picture) decides what shows. The file itself is never changed. */
+export class CropSession {
+  constructor(ed, it) {
+    this.ed = ed; this.it = it; this.drag = null;
+    this.orig = { crop: it.crop ? { ...it.crop } : null, x: it.x, y: it.y, w: it.w, aspect: it.aspect };
+    const c = it.crop || { x: 0, y: 0, w: 1, h: 1 }, h = itemHeight(it, ed.app.assets);
+    const s = this.s = it.flip ? -1 : 1, fw = this.fw = it.w / c.w, fh = this.fh = h / c.h;
+    const u0 = c.x, u1 = c.x + c.w;
+    this.f = { x0: s > 0 ? (u0 - 0.5) * fw : (0.5 - u1) * fw, x1: s > 0 ? (u1 - 0.5) * fw : (0.5 - u0) * fw, y0: (c.y - 0.5) * fh, y1: (c.y + c.h - 0.5) * fh };
+    const [mx, my] = this.rot((this.f.x0 + this.f.x1) / 2, (this.f.y0 + this.f.y1) / 2);
+    this.cx = it.x - mx; this.cy = it.y - my;
+  }
+  rot(x, y, inv = false) { const a = rad(this.it.rot || 0) * (inv ? -1 : 1), c = Math.cos(a), s = Math.sin(a); return [x * c - y * s, x * s + y * c]; }
+  get p() { return this.ed.piece(this.it.piece); }
+  // pointer → full-picture local cm (unrotated, from the full picture's centre)
+  local(e) { const [x, y] = this.ed.toSheet(e), p = this.p; return this.rot(x - p.sx - this.cx, y - p.sy - this.cy, true); }
+  screen(lx, ly) { const [x, y] = this.rot(lx, ly), p = this.p; return this.ed.toScreen(p.sx + this.cx + x, p.sy + this.cy + y); }
+  handles() {
+    const f = this.f, mx = (f.x0 + f.x1) / 2, my = (f.y0 + f.y1) / 2;
+    return [['nw', f.x0, f.y0], ['n', mx, f.y0], ['ne', f.x1, f.y0], ['e', f.x1, my], ['se', f.x1, f.y1], ['s', mx, f.y1], ['sw', f.x0, f.y1], ['w', f.x0, my]].map(([h, x, y]) => ({ h, pt: this.screen(x, y) }));
+  }
+  handleAt(e) {
+    const r = this.ed.cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    return this.handles().find(h => Math.hypot(h.pt[0] - mx, h.pt[1] - my) <= 10)?.h || null;
+  }
+  inside(e) { const [lx, ly] = this.local(e), f = this.f; return lx >= f.x0 && lx <= f.x1 && ly >= f.y0 && ly <= f.y1; }
+  hover(e) { const h = this.handleAt(e); return h ? ({ n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize' }[h]) : this.inside(e) ? 'move' : 'default'; }
+  /** returns false when the press was outside the frame (the caller then finishes cropping) */
+  down(e) {
+    const h = this.handleAt(e);
+    if (h) { this.drag = { h }; return true; }
+    if (this.inside(e)) { const [x, y] = this.ed.toSheet(e); this.drag = { h: 'move', x, y, cx: this.cx, cy: this.cy, f: { ...this.f } }; return true; }
+    return false;
+  }
+  move(e) {
+    const d = this.drag; if (!d) return;
+    const f = this.f, m = 0.3, W = this.fw / 2, H = this.fh / 2;
+    if (d.h === 'move') {
+      const [x, y] = this.ed.toSheet(e);
+      let [lx, ly] = this.rot(x - d.x, y - d.y, true);
+      lx = clamp(lx, d.f.x1 - W, d.f.x0 + W); ly = clamp(ly, d.f.y1 - H, d.f.y0 + H);
+      const [gx, gy] = this.rot(lx, ly);
+      this.cx = d.cx + gx; this.cy = d.cy + gy;
+      Object.assign(f, { x0: d.f.x0 - lx, x1: d.f.x1 - lx, y0: d.f.y0 - ly, y1: d.f.y1 - ly });
+    } else {
+      const [lx, ly] = this.local(e);
+      if (d.h.includes('w')) f.x0 = clamp(lx, -W, f.x1 - m);
+      if (d.h.includes('e')) f.x1 = clamp(lx, f.x0 + m, W);
+      if (d.h.includes('n')) f.y0 = clamp(ly, -H, f.y1 - m);
+      if (d.h.includes('s')) f.y1 = clamp(ly, f.y0 + m, H);
+    }
+    this.apply();
+  }
+  up() { this.drag = null; }
+  apply() {
+    const { f, s, fw, fh, it } = this;
+    const u0 = s > 0 ? 0.5 + f.x0 / fw : 0.5 - f.x1 / fw, u1 = s > 0 ? 0.5 + f.x1 / fw : 0.5 - f.x0 / fw;
+    const v0 = 0.5 + f.y0 / fh, v1 = 0.5 + f.y1 / fh, e = 1e-4;
+    if (u0 <= e && v0 <= e && u1 >= 1 - e && v1 >= 1 - e) delete it.crop;
+    else it.crop = { x: clamp(u0, 0, 1), y: clamp(v0, 0, 1), w: clamp(u1 - u0, 0.001, 1), h: clamp(v1 - v0, 0.001, 1) };
+    it.aspect = imageAspect(it); it.w = f.x1 - f.x0;
+    const [mx, my] = this.rot((f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2);
+    it.x = this.cx + mx; it.y = this.cy + my;
+    this.ed.app.itemsChanged(true); this.ed.redraw();
+  }
+  reset() { Object.assign(this.f, { x0: -this.fw / 2, x1: this.fw / 2, y0: -this.fh / 2, y1: this.fh / 2 }); this.apply(); }
+  /** shrink the frame to the visible (non-transparent) part of the picture; false if nothing to trim */
+  trim() {
+    const img = getImage(this.ed.app.assets, this.it.asset); if (!img) return false;
+    const k = Math.min(1, 1024 / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(img.naturalWidth * k)); cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+    const c = cv.getContext('2d', { willReadFrequently: true }); c.drawImage(img, 0, 0, cv.width, cv.height);
+    const W = cv.width, H = cv.height, d = c.getImageData(0, 0, W, H).data;
+    // only look inside the current frame
+    const { f, s, fw, fh } = this;
+    const fu0 = s > 0 ? 0.5 + f.x0 / fw : 0.5 - f.x1 / fw, fu1 = s > 0 ? 0.5 + f.x1 / fw : 0.5 - f.x0 / fw;
+    const X0 = Math.floor(fu0 * W), X1 = Math.ceil(fu1 * W), Y0 = Math.floor((0.5 + f.y0 / fh) * H), Y1 = Math.ceil((0.5 + f.y1 / fh) * H);
+    let x0 = X1, y0 = Y1, x1 = X0 - 1, y1 = Y0 - 1;
+    for (let y = Math.max(0, Y0); y < Math.min(H, Y1); y++) for (let x = Math.max(0, X0); x < Math.min(W, X1); x++) if (d[(y * W + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < x0) return false;
+    x1++; y1++;
+    if (x0 - X0 <= 1 && y0 - Y0 <= 1 && X1 - x1 <= 1 && Y1 - y1 <= 1) return false;
+    const u0 = x0 / W, u1 = x1 / W;
+    Object.assign(f, { x0: s > 0 ? (u0 - 0.5) * fw : (0.5 - u1) * fw, x1: s > 0 ? (u1 - 0.5) * fw : (0.5 - u0) * fw, y0: (y0 / H - 0.5) * fh, y1: (y1 / H - 0.5) * fh });
+    this.apply();
+    return true;
+  }
+  cancel() {
+    const o = this.orig, it = this.it;
+    if (o.crop) it.crop = o.crop; else delete it.crop;
+    Object.assign(it, { x: o.x, y: o.y, w: o.w, aspect: o.aspect });
+    this.ed.app.itemsChanged(true);
+  }
+  draw(c) {
+    const ed = this.ed, it = this.it, p = this.p; if (!p) return;
+    const css = getComputedStyle(document.documentElement), accent = css.getPropertyValue('--accent').trim();
+    const img = getImage(ed.app.assets, it.asset);
+    if (img) { // the whole picture, faint, so you can see what is cropped away
+      const [sx, sy] = ed.toScreen(p.sx + this.cx, p.sy + this.cy);
+      c.save(); c.translate(sx, sy); c.rotate(rad(it.rot || 0)); c.scale(ed.view.s * this.s, ed.view.s);
+      c.globalAlpha = 0.32 * (it.opacity ?? 1); c.drawImage(img, -this.fw / 2, -this.fh / 2, this.fw, this.fh); c.restore();
+    }
+    const f = this.f, pts = [[f.x0, f.y0], [f.x1, f.y0], [f.x1, f.y1], [f.x0, f.y1]].map(([x, y]) => this.screen(x, y));
+    c.save();
+    c.beginPath(); pts.forEach((q, i) => i ? c.lineTo(...q) : c.moveTo(...q)); c.closePath();
+    c.lineWidth = 1.5; c.strokeStyle = '#fff'; c.stroke(); c.setLineDash([5, 4]); c.strokeStyle = accent; c.stroke(); c.setLineDash([]);
+    for (const h of this.handles()) { c.beginPath(); c.rect(h.pt[0] - 5, h.pt[1] - 5, 10, 10); c.fillStyle = '#fff'; c.fill(); c.strokeStyle = accent; c.lineWidth = 1.5; c.stroke(); }
+    c.restore();
+  }
+}

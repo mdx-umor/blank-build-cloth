@@ -4,13 +4,13 @@ import { GARMENT_LIST, garmentThumbSVG, buildGarment, isModelGarment } from './g
 import { uid, loadImage, clamp } from './util.js';
 
 let E;
-export function initPanels(env) { E = env; bindFiles(); bindCrop(); bindModels(); bindTour(); }
+export function initPanels(env) { E = env; bindFiles(); bindModels(); bindTour(); }
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* ================================================================ Your files (this browser) */
 export async function saveToFiles({ silent = false } = {}) {
   const { app } = E;
-  const used = new Set(app.doc.items.filter(i => i.asset).map(i => i.asset));
+  const used = new Set(app.doc.items.flatMap(i => [i.asset, i.vec?.asset]).filter(Boolean));
   const assets = Object.fromEntries(Object.entries(app.assets).filter(([k]) => used.has(k)));
   const id = app.fileId || (app.fileId = uid('f'));
   const prev = await store.getFile(id).catch(() => null);
@@ -44,53 +44,6 @@ function bindFiles() {
     }
   });
   E.$('#filesImport').onclick = () => E.$('#fileProject').click();
-}
-
-/* ================================================================ crop */
-let cropItem = null, crop = null;
-export async function openCrop(it) {
-  const src = E.app.assets[it.asset]; if (!src) return;
-  cropItem = it; crop = { ...(it.crop || { x: 0, y: 0, w: 1, h: 1 }) };
-  const img = E.$('#cropImg');
-  img.src = src;
-  await loadImage(src).catch(() => {});
-  E.$('#cropDlg').hidden = false;
-  requestAnimationFrame(placeBox);
-}
-function placeBox() {
-  const img = E.$('#cropImg'), box = E.$('#cropBox'), st = E.$('#cropStage');
-  const r = img.getBoundingClientRect(), sr = st.getBoundingClientRect();
-  box.style.left = (r.left - sr.left + crop.x * r.width) + 'px'; box.style.top = (r.top - sr.top + crop.y * r.height) + 'px';
-  box.style.width = crop.w * r.width + 'px'; box.style.height = crop.h * r.height + 'px';
-}
-function bindCrop() {
-  const box = E.$('#cropBox');
-  let drag = null;
-  box.addEventListener('pointerdown', (e) => {
-    e.preventDefault(); box.setPointerCapture(e.pointerId);
-    drag = { h: e.target.dataset.h || 'move', x: e.clientX, y: e.clientY, c: { ...crop } };
-  });
-  box.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    const r = E.$('#cropImg').getBoundingClientRect();
-    const dx = (e.clientX - drag.x) / r.width, dy = (e.clientY - drag.y) / r.height, c = drag.c, m = 0.02;
-    let { x, y, w, h } = c;
-    if (drag.h === 'move') { x = clamp(c.x + dx, 0, 1 - c.w); y = clamp(c.y + dy, 0, 1 - c.h); }
-    if (drag.h.includes('w')) { x = clamp(c.x + dx, 0, c.x + c.w - m); w = c.w + (c.x - x); }
-    if (drag.h.includes('e')) { w = clamp(c.w + dx, m, 1 - c.x); }
-    if (drag.h.includes('n')) { y = clamp(c.y + dy, 0, c.y + c.h - m); h = c.h + (c.y - y); }
-    if (drag.h.includes('s')) { h = clamp(c.h + dy, m, 1 - c.y); }
-    crop = { x, y, w, h }; placeBox();
-  });
-  box.addEventListener('pointerup', () => (drag = null));
-  E.$('#cropReset').onclick = () => { crop = { x: 0, y: 0, w: 1, h: 1 }; placeBox(); };
-  E.$('#cropApply').onclick = () => {
-    if (!cropItem) return;
-    const full = crop.x < 0.001 && crop.y < 0.001 && crop.w > 0.999 && crop.h > 0.999;
-    E.applyCrop(cropItem, full ? null : crop);
-    E.$('#cropDlg').hidden = true;
-  };
-  window.addEventListener('resize', () => { if (!E.$('#cropDlg').hidden) placeBox(); });
 }
 
 /* ================================================================ models picker */

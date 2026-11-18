@@ -1,13 +1,16 @@
 // Design Master — application controller.
 import { buildGarment, GARMENT_LIST, garmentThumbSVG, isModelGarment, modelLoaded, loadModelGarment, LABEL_SHAPES } from './garments.js';
 import { Studio, GOBOS, goboCanvas } from './scene.js';
-import { PatternEditor } from './editor.js';
+import { PatternEditor, CropSession } from './editor.js';
 import { FABRICS, WASHES, SWATCHES, buildOverlays } from './fabric.js';
-import { FONTS, SHAPES, isLine, itemRaster, drawFabric, drawArtwork, prepareOverlayTint, itemHeight, trimTransparent, removeBackground, itemCorners, hitItem, imageAspect, gradientStops, piecePath } from './atlas.js';
+import { FONTS, SHAPES, isLine, imageSource, itemRaster, drawFabric, drawArtwork, prepareOverlayTint, itemHeight, trimTransparent, removeBackground, itemCorners, hitItem, imageAspect, gradientStops, gradientCss, piecePath } from './atlas.js';
 import { uid, clamp, download, readFileAsDataURL, readFileAsText, loadImage, makeCanvas, debounce, slug, luminance, pointInPoly } from './util.js';
 import * as store from './store.js';
+import { readPicture, sniff, ImportError } from './importer.js';
+import { initHalftone, openHalftone, setShirtColour } from './halftone.js';
+const usedAssets = (doc) => new Set(doc.items.flatMap(i => [i.asset, i.vec?.asset]).filter(Boolean));
 import { initExports, runExport, openRender, snapshot3D, isBusyRendering } from './exports.js';
-import { initPanels, saveToFiles, openFiles, openCrop, toggleModels, startTour } from './panels.js';
+import { initPanels, saveToFiles, openFiles, toggleModels, startTour } from './panels.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -43,12 +46,13 @@ const app = {
   doc: DEFAULT_DOC(), assets: {}, garment: null, selIds: [], presetIdx: 0, fileId: null,
   baseCanvas: null, atlasCanvas: makeCanvas(4, 4), insideCanvas: makeCanvas(4, 4), overlays: null,
   history: [], future: [], $,
+  startCrop: (it) => startCrop(it), endCrop: (keep) => endCrop(keep), runExport: (a) => runExport(a),
   get selId() { return this.selIds[this.selIds.length - 1] || null; },
   selected() { return this.doc.items.find(i => i.id === this.selId) || null; },
   selectedItems() { return this.selIds.map(id => this.doc.items.find(i => i.id === id)).filter(Boolean); },
-  select(id) { const ids = id ? [id] : []; if (ids.join() === this.selIds.join()) return; this.selIds = ids; editor.redraw(); renderDesign(); },
+  select(id) { const ids = id ? [id] : []; if (ids.join() === this.selIds.join()) return; if (editor.crop) endCrop(true); this.selIds = ids; editor.redraw(); renderDesign(); },
   toggleSelect(id) { this.selIds = this.selIds.includes(id) ? this.selIds.filter(x => x !== id) : [...this.selIds, id]; editor.redraw(); renderDesign(); },
-  setSelection(ids, live) { this.selIds = ids; editor.redraw(); if (!live) renderDesign(); },
+  setSelection(ids, live) { if (editor.crop && !live) endCrop(true); this.selIds = ids; editor.redraw(); if (!live) renderDesign(); },
   itemsChanged(live) { scheduleAtlas(); editor.redraw(); if (live) syncSelectedFields(); else { renderLayers(); syncSelectedFields(); } },
   commit, assetReady() { scheduleAtlas(); editor.redraw(); renderLayers(); },
   focusText() { const t = $('#tabDesign textarea'); if (t) { switchTab('design'); t.focus(); t.select(); } },
@@ -77,6 +81,7 @@ app.studio = studio; app.editor = editor;
 function geoKey() { const d = app.doc; return [d.garment, d.fabric.wrinklesOn === false ? 0 : d.fabric.wrinkles, d.details.label, d.details.labelShape, d.scene.hanger].join('|'); }
 let lastGeoKey = '';
 async function applyGarment(id, { reframe = false } = {}) {
+  if (editor?.crop) endCrop(true);
   app.doc.garment = id;
   if (isModelGarment(id) && !modelLoaded(id)) {
     toast('Loading the garment…', 8000);
@@ -125,6 +130,7 @@ function atlasPpc(hi = false) {
   return Math.min(hi ? 60 : 14, tex / max);
 }
 function rebuildBase(ppc = atlasPpc()) {
+  setShirtColour(app.doc.fabric.color);
   const g = app.garment;
   const cv = app.baseCanvas && app.baseCanvas._ppc === ppc ? app.baseCanvas : makeCanvas(g.sheet.w * ppc, g.sheet.h * ppc);
   cv.width = Math.round(g.sheet.w * ppc); cv.height = Math.round(g.sheet.h * ppc); cv._ppc = ppc;
@@ -139,13 +145,25 @@ function composeAtlas(target, base, ppc, wrap = app.wrapCanvas) {
   const c = target.getContext('2d');
   c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(base, 0, 0);
   c.setTransform(ppc, 0, 0, ppc, 0, 0);
+  const f = app.doc.fabric;
+  if (f.washPrints && app.overlays && f.wash !== 'none') {
+    // "Wash the prints too": the prints go on their own layer, the wash is laid over just them
+    const art = makeCanvas(base.width, base.height), a = art.getContext('2d');
+    a.setTransform(ppc, 0, 0, ppc, 0, 0);
+    drawArtwork(a, app.garment, app.doc.items, app.assets, () => app.assetReady(), ppc, 'out', !!wrap);
+    if (wrap) a.drawImage(wrap, 0, 0, app.garment.sheet.w, app.garment.sheet.h);
+    a.globalCompositeOperation = 'source-atop';
+    drawFabric(a, app.garment, f, app.overlays, { washOnly: true });
+    c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(art, 0, 0);
+    return target;
+  }
   drawArtwork(c, app.garment, app.doc.items, app.assets, () => app.assetReady(), ppc, 'out', !!wrap);
   if (wrap) c.drawImage(wrap, 0, 0, app.garment.sheet.w, app.garment.sheet.h);
   return target;
 }
 // wrap over seams: project those prints onto the 3D garment and bake them into the pattern sheet
-function bakeWrapLayer(W, H) {
-  const list = app.doc.items.filter(i => i.wrap && !i.hidden && (i.face || 'out') === 'out');
+function bakeWrapLayer(W, H, only = null) {
+  const list = only || app.doc.items.filter(i => i.wrap && !i.hidden && (i.face || 'out') === 'out');
   if (!list.length || !studio.panelMeshes?.length || studio.garment !== app.garment) return null;
   const prints = [];
   for (const it of list) {
@@ -200,6 +218,7 @@ function commit() {
   updateUndo(); autosave();
 }
 function restore(s) {
+  if (editor.crop) { editor.crop = null; $('#cropBar').hidden = true; }
   const prev = app.doc;
   app.doc = JSON.parse(s);
   if (prev.garment !== app.doc.garment || prev.details.labelShape !== app.doc.details.labelShape) applyGarment(app.doc.garment);
@@ -215,7 +234,7 @@ function undo() { if (app.history.length < 2) return; app.future.push(app.histor
 function redo() { const s = app.future.pop(); if (!s) return; app.history.push(s); restore(s); updateUndo(); }
 function updateUndo() { $('#undoBtn').disabled = app.history.length < 2; $('#redoBtn').disabled = !app.future.length; }
 const autosave = debounce(() => {
-  const used = new Set(app.doc.items.filter(i => i.asset).map(i => i.asset));
+  const used = usedAssets(app.doc);
   for (const k of Object.keys(app.assets)) if (!used.has(k) && !app.history.some(h => h.includes(k))) delete app.assets[k];
   store.save('autosave', { doc: app.doc, assets: app.assets, fileId: app.fileId }).catch(() => {});
 }, 600);
@@ -249,15 +268,30 @@ function addItem(it, at) {
   return it;
 }
 async function addImageFile(file, at) {
-  if (file.type === 'application/json' || /\.(dmproj|json)$/i.test(file.name)) return openProjectFile(file);
-  if (!file.type.startsWith('image/')) return toast('That file is not an image.');
-  let src = await readFileAsDataURL(file);
-  let img = await loadImage(src);
-  let w = img.naturalWidth || 1000, h = img.naturalHeight || 1000;
-  if (file.type === 'image/svg+xml') { const k = 4000 / Math.max(w, h); const cv = makeCanvas(w * k, h * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); src = cv.toDataURL('image/png'); w = cv.width; h = cv.height; }
-  else if (Math.max(w, h) > 8000) { const k = 8000 / Math.max(w, h); const cv = makeCanvas(w * k, h * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); src = cv.toDataURL('image/png'); w = cv.width; h = cv.height; }
-  const asset = uid('a'); app.assets[asset] = src;
-  addItem({ type: 'image', asset, aspect: w / h, px: [w, h], name: file.name.replace(/\.[^.]+$/, ''), w: 25 }, at);
+  const kind = await sniff(file);
+  if (kind === 'project') return openProjectFile(file);
+  let pic;
+  toast('Preparing image…', 60000);
+  try { pic = await readPicture(file); }
+  catch (e) { toast(e instanceof ImportError ? e.message : 'This picture couldn’t be opened.', 6000); return; }
+  toast(pic.note || 'Tip: paste a picture with Ctrl+V.', pic.note ? 5000 : 2600);
+  addItem(pictureItem(pic, { w: 26 }), at);
+}
+// a picture item from a read file (keeps the vector original alongside the picture that is shown)
+function pictureItem(pic, extra = {}) {
+  const asset = uid('a'); app.assets[asset] = pic.src;
+  const it = { type: 'image', asset, aspect: pic.w / pic.h, px: [pic.w, pic.h], name: pic.name, ...extra };
+  if (pic.vec) { const va = uid('v'); app.assets[va] = pic.vec.data; it.vec = { kind: pic.vec.kind, asset: va, size: pic.vec.size, page: pic.vec.page }; }
+  return it;
+}
+async function replaceImage(it, file) {
+  let pic;
+  try { pic = await readPicture(file); } catch (e) { toast(e instanceof ImportError ? e.message : 'This picture couldn’t be opened.', 6000); return; }
+  const n = pictureItem(pic);
+  Object.assign(it, { asset: n.asset, px: n.px, name: n.name }); delete it.crop; delete it.vec;
+  if (n.vec) it.vec = n.vec;
+  it.aspect = imageAspect(it);
+  app.itemsChanged(false); renderDesign(); commit();
 }
 function addText(at) {
   const dark = luminance(app.doc.fabric.color) > 0.5;
@@ -295,12 +329,30 @@ function newDesign() {
   app.itemsChanged(false); renderDesign(); commit();
   toast('New design — undo (Ctrl+Z) brings the old one back.');
 }
-function applyCrop(it, crop) {
-  const oldW = it.w;
-  it.crop = crop || undefined; if (!crop) delete it.crop;
-  it.aspect = imageAspect(it);
-  it.w = oldW;
-  app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit();
+/* crop in place on the pattern (the picture file stays as it is) */
+function startCrop(it) {
+  if (!it || it.type !== 'image') return;
+  if (editor.crop) endCrop(true);
+  if ($('#work').classList.contains('mode-3d')) setMode('split');
+  if ((it.face || 'out') !== editor.face()) setSide(it.face || 'out');
+  app.selIds = [it.id];
+  editor.crop = new CropSession(editor, it);
+  $('#cropBar').hidden = false;
+  editor.redraw(); renderDesign();
+}
+function endCrop(keep) {
+  const s = editor.crop; if (!s) return;
+  if (!keep) s.cancel();
+  editor.crop = null; $('#cropBar').hidden = true;
+  app.itemsChanged(false); editor.cursor(); renderDesign();
+  if (keep) commit();
+}
+function cropAction(act) {
+  const s = editor.crop; if (!s) return;
+  if (act === 'trim') { if (!s.trim()) toast('No empty edges to trim.'); }
+  if (act === 'reset') s.reset();
+  if (act === 'cancel') endCrop(false);
+  if (act === 'done') endCrop(true);
 }
 function setTool(t) {
   editor.tool = t;
@@ -431,12 +483,20 @@ function selectedHTML() {
     tools += slider('item.sat', 'Saturation', 0, 2, 0.01, { pct: true, def: 1 });
     tools += `<div class="trow"><span>Fill with colour</span><span style="display:flex;gap:6px;align-items:center"><input type="color" data-k="item.fillColor" value="${it.fillColor || '#ffffff'}" style="width:28px;height:24px;border:1px solid var(--line-strong);border-radius:6px;padding:0;background:none" aria-label="Fill colour">${eyeBtn('item.fillColor')}<label class="toggle"><input type="checkbox" data-k="item.fill" ${it.fill ? 'checked' : ''} aria-label="Fill with colour"><span></span></label></span></div>`;
     tools += `<button class="btn sm block" data-act="resetColours" ${it.invert || it.hue || (it.sat ?? 1) !== 1 || it.fill ? '' : 'disabled'}>Reset colours</button>`;
-    tools += toggleRow('item.halftone', 'Halftone');
-    if (it.halftone) tools += slider('item.halftoneSize', 'Dot size', 0.8, 8, 0.1, { suf: ' mm', def: 2 });
+    tools += `<button class="btn block ${it.halftone ? 'on' : ''}" data-act="halftone" title="Turn your image into dots for a screen-print finish">Halftone${it.halftone ? ' · on' : '…'}</button>`;
     tools += `<div class="row3" style="margin-top:10px"><button class="btn sm" data-act="trim">Trim empty edges</button><button class="btn sm" data-act="nobg">Remove background</button><span></span></div>`;
-    tools += `<div class="row"><label>Print quality</label><div class="ctl"><span style="font-weight:600;color:${dpi < 120 ? 'var(--danger)' : dpi >= 200 ? 'var(--accent)' : 'var(--ink)'}" data-dpi>${dpi} DPI</span><span class="hintline" style="margin:0">${pw} × ${ph} px</span></div></div>`;
+    if (it.vec && !it.halftone) tools += `<div class="row"><label>Print quality</label><div class="ctl"><span style="font-weight:600;color:var(--accent)">Vector</span><span class="hintline" style="margin:0">${it.vec.kind === 'pdf' ? 'PDF' : 'SVG'} · sharp at any size</span></div></div>`;
+    else tools += `<div class="row"><label>Print quality</label><div class="ctl"><span style="font-weight:600;color:${dpi < 120 ? 'var(--danger)' : dpi >= 200 ? 'var(--accent)' : 'var(--ink)'}" data-dpi>${dpi} DPI</span><span class="hintline" style="margin:0">${pw} × ${ph} px</span></div></div>`;
   }
-  if ((it.face || 'out') === 'out') tools += `<div class="trow"><span title="The print continues over the seams onto the neighbouring pieces, as if it were printed on the sewn garment">Wrap over seams <span class="hintline" style="margin:0">ⓘ</span></span><label class="toggle"><input type="checkbox" data-k="item.wrap" ${it.wrap ? 'checked' : ''} aria-label="Wrap over seams"><span></span></label></div>`;
+  if ((it.face || 'out') === 'out') {
+    const tip = 'The part of the design that runs past the edge of its piece goes on across the seam onto the next piece: from the front to the back over the shoulders and sides, onto the sleeves and the hood. Once sewn, the picture meets at the seam. Each piece gets its own print file, with a little extra past the seam so no white line shows.';
+    tools += `<div class="trow"><span title="${tip}">Wrap over seams <span class="hintline" style="margin:0">ⓘ</span></span><label class="toggle"><input type="checkbox" data-k="item.wrap" ${it.wrap ? 'checked' : ''} aria-label="Wrap over seams"><span></span></label></div>`;
+    if (it.wrap) {
+      const okPiece = /^(front|back|sleeve|hood|pocket)/i.test(it.piece) || app.garment.model;
+      if (!okPiece) tools += `<div class="hintline" style="color:var(--danger)">Works on the front, back, sleeves, hood and pocket. Move the design onto one of them.</div>`;
+      tools += slider('item.wrapBleed', 'Extra past the seams', 0, 20, 1, { suf: ' mm', def: 5 });
+    }
+  }
   tools += segRow('item.blend', 'Print look', [['normal', 'Solid ink'], ['multiply', 'Soft (dyed)']]);
   tools += slider('item.distress', 'Distress', 0, 1, 0.01, { pct: true });
   tools += `<div class="row2" style="margin-top:8px"><button class="btn sm" data-act="up" title="Forward">▲ Forward</button><button class="btn sm" data-act="down" title="Backward">▼ Backward</button></div>`;
@@ -475,8 +535,9 @@ function renderLayers() {
 /* ---------- Fabric tab ---------- */
 function gradientEditor() {
   const f = app.doc.fabric, st = gradientStops(f), cur = clamp(f._stop ?? 0, 0, st.length - 1);
-  const css = `linear-gradient(90deg, ${st.map(s => `${s.c} ${Math.round(s.p * 100)}%`).join(', ')})`;
-  return `<div class="grad-bar" id="gradBar" style="background:${css}" title="Click under the bar to add a colour (up to 5)">${st.map((s, i) => `<span class="stop ${i === cur ? 'on' : ''}" data-stop="${i}" style="left:${s.p * 100}%;background:${s.c}" title="Colour stop ${i + 1}, at ${Math.round(s.p * 100)}%"></span>`).join('')}</div>
+  const css = gradientCss(st);
+  const mids = st.slice(0, -1).map((s, i) => `<span class="mid" data-mid="${i}" style="left:${(s.p + (s.m ?? 0.5) * (st[i + 1].p - s.p)) * 100}%" title="Midpoint: drag to move where the blend is half-way"></span>`).join('');
+  return `<div class="grad-bar" id="gradBar" style="background:${css}" title="Click under the bar to add a colour (up to 5). Drag a marker away from the bar to remove it.">${mids}${st.map((s, i) => `<span class="stop ${i === cur ? 'on' : ''}" data-stop="${i}" style="left:${s.p * 100}%;background:${s.c}" title="Colour stop ${i + 1}, at ${Math.round(s.p * 100)}%"></span>`).join('')}</div>
     <div class="hintline" style="margin:-8px 0 6px;display:flex;justify-content:space-between"><span>Top</span><span>Bottom</span></div>
     <div class="row"><label>Stop ${cur + 1}</label><div class="ctl color"><input type="color" data-stopc="${cur}" value="${st[cur].c}" aria-label="Colour of this stop"><input type="number" data-stopp="${cur}" min="0" max="100" step="1" value="${Math.round(st[cur].p * 100)}" style="width:70px" aria-label="Location"><span class="hintline" style="margin:0">%</span></div></div>
     <div class="row3"><button class="btn sm" data-act="gradAdd" ${st.length >= 5 ? 'disabled' : ''}>Add colour</button><button class="btn sm" data-act="gradDel" ${st.length <= 2 ? 'disabled' : ''}>Remove this colour</button><button class="btn sm" data-act="gradSwap">Swap colours</button></div>
@@ -491,7 +552,8 @@ function renderFabric() {
     ${selectRow('fabric.wash', 'Wash', WASHES.map(w => [w.id, w.name]))}
     ${f.wash !== 'none' ? slider('fabric.washAmt', 'Strength', 0, 1, 0.01, { pct: true }) : ''}
     ${WASHES.find(w => w.id === f.wash)?.tint ? colorRow('fabric.color2', 'Dye colour') : ''}
-    ${f.wash !== 'none' || f.heather ? `<button class="btn sm block" data-act="reseed" style="margin-top:6px">Shuffle the pattern</button>` : ''}`);
+    ${f.wash !== 'none' ? slider('fabric.washSize', 'Spot size', 0.4, 2.5, 0.05, { x: true, def: 1 }) + toggleRow('fabric.washPrints', 'Wash the prints too') : ''}
+    ${f.wash !== 'none' || f.heather ? `<button class="btn sm block" data-act="reseed" style="margin-top:6px">Another pattern</button>` : ''}`);
   html += sec('Appearance', `
     ${selectRow('fabric.type', 'Material', FABRICS.map(x => [x.id, x.name]))}
     ${toggleRow('fabric.ao', 'Fold shadows (AO)', true)}
@@ -572,10 +634,10 @@ function onValue(path, live) {
   if (scope === 'item') {
     const it = app.selected();
     app.itemsChanged(live);
-    if (!live && ['font', 'shape', 'outline', 'stroke', 'blend', 'fill', 'halftone'].includes(key)) $('#selSec').innerHTML = selectedHTML();
+    if (!live && ['font', 'shape', 'outline', 'stroke', 'blend', 'fill', 'halftone', 'wrap'].includes(key)) $('#selSec').innerHTML = selectedHTML();
     if (['text', 'color', 'font'].includes(key)) { renderLayers(); if (key === 'text') $('#tabDesign .hintline').textContent = `«${(it?.text || '').split('\n')[0]}»`; }
   } else if (scope === 'fabric') {
-    if (['wash', 'heather', 'washSeed'].includes(key)) rebuildOverlays();
+    if (['wash', 'heather', 'washSeed', 'washSize'].includes(key)) rebuildOverlays();
     if (key === 'color2') prepareOverlayTint(app.overlays, app.doc.fabric.color2);
     if (['type', 'knit', 'relief', 'ao', 'bright', 'contrast'].includes(key)) studio.updateFabric(app.doc.fabric);
     else if (key === 'wrinkles' || key === 'wrinklesOn') { rebuildGeometrySoon(); if (!live) renderFabric(); }
@@ -624,7 +686,7 @@ function bindInspector() {
       if (el.dataset.stopc !== undefined) st[i].c = el.value; else st[i].p = clamp((parseFloat(el.value) || 0) / 100, 0, 1);
       f.stops = st; f.color = st[0].c; f._stop = i;
       rebuildBase(); studio.updateFabric(f);
-      if (!live) { renderFabric(); commit(); } else { const bar = $('#gradBar'); if (bar) bar.style.background = `linear-gradient(90deg, ${gradientStops(f).map(s => `${s.c} ${Math.round(s.p * 100)}%`).join(', ')})`; }
+      if (!live) { renderFabric(); commit(); } else { const bar = $('#gradBar'); if (bar) bar.style.background = gradientCss(gradientStops(f)); }
       return;
     }
     if (el.dataset.block) {
@@ -690,7 +752,8 @@ function bindInspector() {
       case 'bold': it.weight = it.weight >= 700 ? 400 : 700; { const f = FONTS.find(f => f.family === it.font); if (f && !f.weights.includes(it.weight)) it.weight = f.weights.reduce((a, w) => Math.abs(w - it.weight) < Math.abs(a - it.weight) ? w : a, f.weights[0]); } app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
       case 'invert': it.invert = !it.invert; b.classList.toggle('on'); app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
       case 'resetColours': delete it.invert; delete it.hue; delete it.sat; it.fill = false; app.itemsChanged(false); $('#selSec').innerHTML = selectedHTML(); commit(); return;
-      case 'crop': return openCrop(it);
+      case 'crop': return app.startCrop(it);
+      case 'halftone': return openHalftone(it);
       case 'up': return moveZ(1);
       case 'down': return moveZ(-1);
       case 'dup': return duplicateSel();
@@ -724,6 +787,19 @@ function bindInspector() {
     const f = app.doc.fabric, r = bar.getBoundingClientRect();
     const stopEl = e.target.closest('[data-stop]');
     let st = gradientStops(f);
+    const midEl = e.target.closest('[data-mid]');
+    if (midEl) { // midpoint: where the blend between two colours is half-way
+      const j = +midEl.dataset.mid; e.preventDefault();
+      const mv = (ev) => {
+        const s0 = st[j], s1 = st[j + 1]; if (!s0 || !s1 || s1.p <= s0.p) return;
+        s0.m = clamp(((ev.clientX - r.left) / r.width - s0.p) / (s1.p - s0.p), 0.05, 0.95);
+        f.stops = st; rebuildBase(); studio.updateFabric(f);
+        bar.style.background = gradientCss(st); midEl.style.left = (s0.p + s0.m * (s1.p - s0.p)) * 100 + '%';
+      };
+      const upm = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', upm); renderFabric(); commit(); };
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', upm);
+      return;
+    }
     let i;
     if (stopEl) i = +stopEl.dataset.stop;
     else { if (st.length >= 5) return; const p = clamp((e.clientX - r.left) / r.width, 0, 1); st.push({ p, c: st.reduce((a, s) => Math.abs(s.p - p) < Math.abs(a.p - p) ? s : a).c }); st.sort((a, b) => a.p - b.p); i = st.findIndex(s => s.p === p); }
@@ -733,13 +809,13 @@ function bindInspector() {
       st = gradientStops(f); const cur = st[i]; if (!cur) return;
       cur.p = clamp((ev.clientX - r.left) / r.width, 0, 1); cur._away = away;
       f.stops = st; rebuildBase(); studio.updateFabric(f);
-      const bars = $('#gradBar'); if (bars) { bars.style.background = `linear-gradient(90deg, ${st.map(s => `${s.c} ${Math.round(s.p * 100)}%`).join(', ')})`; const m = bars.querySelector(`[data-stop="${i}"]`); if (m) { m.style.left = cur.p * 100 + '%'; m.style.opacity = away ? 0.3 : 1; } }
+      const bars = $('#gradBar'); if (bars) { bars.style.background = gradientCss(st); const m = bars.querySelector(`[data-stop="${i}"]`); if (m) { m.style.left = cur.p * 100 + '%'; m.style.opacity = away ? 0.3 : 1; } }
     };
     const up = (ev) => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
       st = gradientStops(f);
       if (Math.abs(ev.clientY - (r.top + r.height / 2)) > 60 && st.length > 2) { st.splice(i, 1); f._stop = 0; }
-      f.stops = st.map(s => ({ p: s.p, c: s.c })); f.color = f.stops[0].c;
+      f.stops = st.map(s => ({ p: s.p, c: s.c, ...(s.m != null ? { m: s.m } : {}) })); f.color = f.stops[0].c;
       rebuildBase(); studio.updateFabric(f); renderFabric(); commit();
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
@@ -846,9 +922,8 @@ function bindFiles() {
     const files = [...fi.files]; fi.value = '';
     if (pendingReplace && files[0]) {
       const it = app.doc.items.find(i => i.id === pendingReplace); pendingReplace = null;
-      const src = await readFileAsDataURL(files[0]), im = await loadImage(src), a = uid('a'); app.assets[a] = src;
-      Object.assign(it, { asset: a, px: [im.naturalWidth, im.naturalHeight], name: files[0].name.replace(/\.[^.]+$/, '') }); delete it.crop; it.aspect = imageAspect(it);
-      app.itemsChanged(false); renderDesign(); commit(); return;
+      if (it) await replaceImage(it, files[0]);
+      return;
     }
     for (const f of files) await addImageFile(f);
   });
@@ -874,7 +949,7 @@ function bindFiles() {
   });
   window.addEventListener('paste', async e => {
     if (isTyping(e)) return;
-    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
+    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
     if (files.length) { e.preventDefault(); for (const f of files) await addImageFile(f); }
   });
 }
@@ -883,7 +958,7 @@ const isTyping = (e) => { const t = e.target; return t && (t.tagName === 'INPUT'
 /* ====================================================================== */
 /* project files */
 function downloadProject(doc = app.doc, assets) {
-  const used = new Set(doc.items.filter(i => i.asset).map(i => i.asset));
+  const used = usedAssets(doc);
   const src = assets || app.assets;
   const data = JSON.stringify({ app: 'design-master', v: 2, doc, assets: Object.fromEntries(Object.entries(src).filter(([k]) => used.has(k))) });
   download(new Blob([data], { type: 'application/json' }), slug(doc.name) + '.dmproj');
@@ -929,7 +1004,8 @@ async function busy(label, fn) {
 /* header, toolbars, keyboard */
 function bindChrome() {
   $$('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o || e.target.closest('[data-close]')) { if (isBusyRendering() && (o.id === 'renderDlg' || o.id === 'videoDlg')) return; o.hidden = true; } }));
-  $('#undoBtn').onclick = undo; $('#redoBtn').onclick = redo;
+  $('#undoBtn').onclick = () => { if (editor.crop) return endCrop(false); undo(); }; $('#redoBtn').onclick = redo;
+  $('#cropBar').addEventListener('click', (e) => { const b = e.target.closest('[data-crop]'); if (b) cropAction(b.dataset.crop); });
   $('#newBtn').onclick = newDesign;
   $('#filesBtn').onclick = openFiles;
   $('#saveBtn').onclick = () => saveToFiles();
@@ -971,6 +1047,11 @@ function bindChrome() {
   window.addEventListener('keydown', e => {
     if (isTyping(e) || !$('#tour').hidden) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    if (editor.crop) { // while cropping: Esc cancels, Enter keeps it; other shortcuts wait
+      if (k === 'escape') { e.preventDefault(); endCrop(false); } else if (k === 'enter') { e.preventDefault(); endCrop(true); }
+      else if (mod && k === 'z') { e.preventDefault(); endCrop(false); }
+      return;
+    }
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if (mod && k === 'y') { e.preventDefault(); redo(); return; }
     if (mod && k === 's') { e.preventDefault(); saveToFiles(); return; }
@@ -1012,8 +1093,9 @@ function switchGarment(id) { applyGarment(id, { reframe: true }).then(() => comm
 /* ====================================================================== */
 async function boot() {
   bindChrome(); bindInspector(); bind3DDrag(); bindFiles();
-  const env = { app, studio, $, $$, toast, busy, withHiResAtlas, rebuildBase, composeAtlas, downloadProject, importProject: () => $('#fileProject').click(), loadDoc, thumbnail, applyCrop, switchGarment };
-  initExports(env); initPanels(env);
+  const env = { app, studio, $, $$, toast, busy, withHiResAtlas, rebuildBase, composeAtlas, downloadProject, importProject: () => $('#fileProject').click(), loadDoc, thumbnail, switchGarment, bakeWrapItem: (it, W, H) => bakeWrapLayer(W, H, [it]) };
+  initExports(env);
+  initHalftone({ app, $, toast, imageSource: (it) => imageSource(it, app.assets, () => app.assetReady()), changed: () => { app.itemsChanged(false); renderDesign(); commit(); } }); initPanels(env);
   let saved = null;
   try { saved = await store.load('autosave'); } catch { }
   if (saved?.doc) loadDoc(saved.doc, saved.assets || {}, saved.fileId || null);

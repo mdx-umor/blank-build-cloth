@@ -46,18 +46,65 @@ fs.mkdirSync(OUT, { recursive: true });
 
   /* ---------------- artwork ---------------- */
   await t('Add image (file picker)', async () => { await p.setInputFiles('#fileImage', OUT + '/test.png'); await wait(800); return ev(() => DM.doc.items.length === 1 && DM.selected()?.type === 'image') || 'no image item'; });
-  await t('Image panel shows Mirror/Invert/Crop/Copy/Delete/Hue/Saturation/Fill/Reset/Halftone', async () => ev(() => ['flip', 'invert', 'crop', 'dup', 'del', 'resetColours'].every(a => document.querySelector(`[data-act="${a}"]`)) && !!document.querySelector('[data-k="item.hue"]') && !!document.querySelector('[data-k="item.sat"]') && !!document.querySelector('[data-k="item.fill"]') && !!document.querySelector('[data-k="item.halftone"]')));
+  await t('Image panel shows Mirror/Invert/Crop/Copy/Delete/Hue/Saturation/Fill/Reset/Halftone', async () => ev(() => ['flip', 'invert', 'crop', 'dup', 'del', 'resetColours'].every(a => document.querySelector(`[data-act="${a}"]`)) && !!document.querySelector('[data-k="item.hue"]') && !!document.querySelector('[data-k="item.sat"]') && !!document.querySelector('[data-k="item.fill"]') && !!document.querySelector('[data-act="halftone"]')));
   await t('Invert colours', async () => { await click('[data-act="invert"]'); await wait(300); return ev(() => DM.selected().invert === true); });
   await t('Hue + saturation', async () => { await p.fill('[data-k="item.hue"]', '90'); await p.dispatchEvent('[data-k="item.hue"]', 'change'); await p.fill('[data-k="item.sat"]', '1.5'); await p.dispatchEvent('[data-k="item.sat"]', 'change'); return ev(() => DM.selected().hue === 90 && DM.selected().sat === 1.5); });
   await t('Fill with colour', async () => { await click('[data-k="item.fill"] + span'); await wait(300); return ev(() => DM.selected().fill === true); });
   await t('Reset colours', async () => { await click('[data-act="resetColours"]'); await wait(300); return ev(() => { const i = DM.selected(); return !i.invert && !i.hue && (i.sat ?? 1) === 1 && !i.fill; }); });
-  await t('Halftone on + dot size', async () => { await click('[data-k="item.halftone"] + span'); await wait(400); await p.fill('[data-k="item.halftoneSize"]', '3'); await p.dispatchEvent('[data-k="item.halftoneSize"]', 'change'); const r = await ev(() => DM.selected().halftone === true && DM.selected().halftoneSize === 3); await click('[data-k="item.halftone"] + span'); return r; });
-  await t('Crop dialog: drag the frame and apply', async () => {
-    await click('[data-act="crop"]'); await wait(600);
-    const box = await p.locator('#cropBox i[data-h="se"]').boundingBox();
-    await p.mouse.move(box.x + 7, box.y + 7); await p.mouse.down(); await p.mouse.move(box.x - 80, box.y - 50, { steps: 5 }); await p.mouse.up();
-    await click('#cropApply'); await wait(400);
-    return ev(() => { const c = DM.selected().crop; return !!c && c.w < 0.9 && Math.abs(DM.selected().aspect - (400 * c.w) / (300 * c.h)) < 0.01; }) || 'crop not stored';
+  await t('Halftone dialog: every style and dot shape previews, Apply and Remove', async () => {
+    await click('[data-act="halftone"]'); await wait(800);
+    if (await ev(() => document.querySelector('#htDlg').hidden)) return 'dialog did not open';
+    for (const v of ['classic', 'dots', 'pal', 'ink', 'cmyk', 'fade']) { await click(`#htSide [data-ht="style"][data-v="${v}"]`); await wait(250); }
+    await click('#htSide [data-ht="style"][data-v="ink"]');
+    for (const v of ['dot', 'line', 'engrave', 'cross', 'diamond', 'square', 'ring', 'grain']) { await click(`#htSide [data-ht="shape"][data-v="${v}"]`); await wait(200); }
+    for (const v of ['L', 'M', 'S']) await click(`#htSide [data-ht="size"][data-v="${v}"]`);
+    await click('#htSide [data-ht="ko"][data-v="none"]'); await wait(400);
+    const painted = await ev(() => { const c = document.querySelector('#htCv'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; const set = new Set(); for (let i = 0; i < d.length; i += 4 * 97) set.add(d[i] >> 4 << 8 | d[i + 1] >> 4 << 4 | d[i + 2] >> 4); return set.size; });
+    if (painted < 2) return 'preview is blank';
+    await click('#htSide [data-ht="apply"]'); await wait(800);
+    const on = await ev(() => { const h = DM.selected().halftone; return !!h && h.style === 'ink' && h.shape === 'grain' && h.size === 'S' && h.ko === 'none'; });
+    if (!on) return 'not applied';
+    await click('[data-act="halftone"]'); await wait(500); await click('#htSide [data-ht="remove"]'); await wait(400);
+    return ev(() => !DM.selected().halftone) || 'not removed';
+  });
+  await t('Crop in place: drag an edge, reset, cancel and done', async () => {
+    await click('[data-act="crop"]'); await wait(500);
+    if (await ev(() => document.querySelector('#cropBar').hidden)) return 'crop bar did not show';
+    const hs = await ev(() => DM.editor.crop.handles().find(h => h.h === 'e').pt);
+    const r = await p.locator('#pat').boundingBox();
+    await p.mouse.move(r.x + hs[0], r.y + hs[1]); await p.mouse.down(); await p.mouse.move(r.x + hs[0] - 60, r.y + hs[1], { steps: 5 }); await p.mouse.up();
+    const c1 = await ev(() => DM.selected().crop);
+    if (!c1 || c1.w > 0.95) return 'edge drag did not crop';
+    await click('[data-crop="reset"]'); if (await ev(() => !!DM.selected().crop)) return 'reset kept a crop';
+    await click('[data-crop="cancel"]'); await wait(300);
+    if (await ev(() => !document.querySelector('#cropBar').hidden)) return 'cancel did not close';
+    await click('[data-act="crop"]'); await wait(400);
+    await ev(() => { const s = DM.editor.crop; s.f.x1 -= 4; s.apply(); });
+    await click('[data-crop="done"]'); await wait(300);
+    return ev(() => { const c = DM.selected().crop; return !!c && c.w < 0.95 && Math.abs(DM.selected().aspect - (400 * c.w) / (300 * c.h)) < 0.01; }) || 'crop not stored';
+  });
+  await t('Import SVG and PDF stay vector; EPS and old AI files get a clear message', async () => {
+    fs.writeFileSync(OUT + '/test.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" rx="40" fill="#e0702f"/><circle cx="150" cy="150" r="90" fill="#1d2d4d"/></svg>');
+    const body = '0.88 0.44 0.18 rg 40 40 520 220 re f 0.11 0.18 0.3 rg 100 100 100 100 re f';
+    fs.writeFileSync(OUT + '/test.pdf', `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 600 300]/Contents 4 0 R>>endobj\n4 0 obj<</Length ${body.length}>>stream\n${body}\nendstream endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n`);
+    fs.writeFileSync(OUT + '/test.eps', '%!PS-Adobe-3.0 EPSF-3.0\n');
+    fs.writeFileSync(OUT + '/old.ai', 'not a pdf');
+    const n0 = await ev(() => DM.doc.items.length);
+    await p.setInputFiles('#fileImage', OUT + '/test.svg'); await wait(1500);
+    const s1 = await ev(() => DM.selected()?.vec?.kind);
+    await p.setInputFiles('#fileImage', OUT + '/test.pdf'); await wait(5000);
+    const s2 = await ev(() => DM.selected()?.vec?.kind);
+    await p.setInputFiles('#fileImage', OUT + '/test.eps'); await wait(800);
+    const m1 = await ev(() => document.querySelector('#toast').textContent);
+    await p.setInputFiles('#fileImage', OUT + '/old.ai'); await wait(800);
+    const m2 = await ev(() => document.querySelector('#toast').textContent);
+    const n1 = await ev(() => DM.doc.items.length);
+    await ev(() => { DM.doc.items = DM.doc.items.filter(i => !i.vec); DM.selIds = [DM.doc.items[0].id]; DM.itemsChanged(false); });
+    if (s1 !== 'svg') return 'svg not vector: ' + s1;
+    if (s2 !== 'pdf') return 'pdf not vector: ' + s2;
+    if (!/EPS files can’t be opened/.test(m1)) return 'eps message: ' + m1;
+    if (!/no PDF inside/.test(m2)) return 'ai message: ' + m2;
+    return n1 - n0 === 2 || `items added: ${n1 - n0}`;
   });
   await t('Mirror', async () => { await click('[data-act="flip"]'); return ev(() => DM.selected().flip === true); });
   await t('Transform: width/height linked, rotation, opacity numbers', async () => {
@@ -194,6 +241,26 @@ fs.mkdirSync(OUT, { recursive: true });
     await p.click('#tabFabric [data-seg="fabric.mode"][data-val="solid"]');
     return n3 === 3 && swapped && n2 === 2 || `stops=${n3} swapped=${swapped} after=${n2}`;
   });
+  await t('Gradient midpoint: drag moves where the blend is half-way', async () => {
+    await p.click('#tabFabric [data-seg="fabric.mode"][data-val="gradient"]'); await wait(300);
+    const m = await p.locator('#gradBar .mid').first().boundingBox();
+    if (!m) return 'no midpoint marker';
+    await p.mouse.move(m.x + m.width / 2, m.y + m.height / 2); await p.mouse.down(); await p.mouse.move(m.x + m.width / 2 + 50, m.y + m.height / 2, { steps: 4 }); await p.mouse.up(); await wait(300);
+    const mid = await ev(() => DM.doc.fabric.stops[0].m);
+    await p.click('#tabFabric [data-seg="fabric.mode"][data-val="solid"]');
+    return mid > 0.55 || 'midpoint ' + mid;
+  });
+  await t('Wash: spot size, wash the prints too, another pattern', async () => {
+    await p.selectOption('[data-k="fabric.wash"]', 'acid'); await wait(300);
+    await p.fill('[data-k="fabric.washSize"]', '2'); await p.dispatchEvent('[data-k="fabric.washSize"]', 'change'); await wait(300);
+    await click('[data-k="fabric.washPrints"] + span'); await wait(300);
+    const seed0 = await ev(() => DM.doc.fabric.washSeed || 0);
+    await click('[data-act="reseed"]'); await wait(300);
+    const ok = await ev((s0) => DM.doc.fabric.washSize === 2 && DM.doc.fabric.washPrints === true && (DM.doc.fabric.washSeed || 0) === s0 + 1, seed0);
+    await click('[data-k="fabric.washPrints"] + span');
+    await p.selectOption('[data-k="fabric.wash"]', 'none');
+    return ok || 'wash options not stored';
+  });
   await t('Every wash renders', async () => {
     const ids = await ev(() => [...document.querySelectorAll('[data-k="fabric.wash"] option')].map(o => o.value));
     for (const id of ids) { await p.selectOption('[data-k="fabric.wash"]', id); await wait(150); }
@@ -299,6 +366,11 @@ fs.mkdirSync(OUT, { recursive: true });
     await click('#exportBtn'); await wait(300); await click('#rReco');
     const reco = await ev(() => document.querySelector('#rReco').classList.contains('on'));
     await p.selectOption('#rSize', 'custom'); await p.fill('#rW', '500'); await p.fill('#rH', '600'); await p.selectOption('#rQuality', '8');
+    for (const v of ['back', 'side', 'front']) { await click(`.rp-bar [data-rv="${v}"]`); await wait(600); }
+    const prevOk = await ev(() => { const c = document.querySelector('#rPrevCv'); if (c.hidden || c.width < 50) return false; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 400) if (d[i]) n++; return n > 20; });
+    if (!prevOk) return 'frame preview is empty';
+    if (await ev(() => document.querySelector('#rView').value !== 'front')) return 'Front button did not set the frame';
+    await click('.rp-bar [data-rv="reset"]'); await wait(400);
     await click('#rStart');
     await p.waitForFunction(() => !document.querySelector('#rSavePng').disabled, null, { timeout: 120000 });
     await click('#rSavePng'); await click('#rSaveWebp'); await click('#rSaveJpg');
@@ -313,13 +385,35 @@ fs.mkdirSync(OUT, { recursive: true });
     await click('[data-k="item.wrap"] + span'); await wait(2500);
     return ev(() => { const wc = DM.wrapCanvas; if (!wc) return 'no wrap layer'; const c = wc.getContext('2d'), k = wc.width / DM.garment.sheet.w; const sl = DM.garment.pieces.find(q => q.id === 'sleeveL'); const d = c.getImageData(sl.sx * k, sl.sy * k, sl.w * k, sl.h * k).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++; return n > 500 || 'sleeve empty'; });
   });
-  for (const [name, act, pred] of [['Print files (ZIP)', 'print', f => f.includes('print-files')], ['Spec sheet (PDF)', 'spec', f => f.endsWith('.pdf')], ['Sublimation panels (ZIP)', 'subl', f => f.includes('sublimation')], ['Sewing pattern PNG', 'pattern', f => f.includes('pattern.png')]]) {
-    await t(name, async () => { await click('#exportMoreBtn'); await p.click(`#exportMenu [data-act="${act}"]`); return waitDl(pred, 180000); });
+  for (const [name, act, pred, setup] of [
+    ['Print files (ZIP) · Original files, different shirt size', 'print', f => f.includes('print-files'), async () => { if (!(await ev(() => document.querySelector('#xSizeOn').checked))) await click('#xSizeOn'); await p.fill('#xSizeW', '60'); await p.dispatchEvent('#xSizeW', 'change'); await click('#xFmt [data-v="orig"]'); }],
+    ['Print files (ZIP) · PNG only', 'print', () => downloads.filter(x => x.includes('print-files')).length >= 2, async () => { await click('#xSizeOn'); await click('#xFmt [data-v="png"]'); }],
+    ['Spec sheet (PDF)', 'spec', f => f.endsWith('spec-sheet.pdf'), null],
+    ['Sublimation panels (ZIP) · 15 mm bleed, cut line, mirrored', 'subl', f => f.includes('sublimation'), async () => { await click('#xBleed [data-v="15"]'); await click('#xCut'); await click('#xMirror'); }],
+  ]) {
+    await t(name, async () => {
+      await click('#exportMoreBtn'); await p.click(`#exportMenu [data-act="${act}"]`); await wait(400);
+      if (await ev(() => document.querySelector('#xDlg').hidden)) return 'options dialog did not open';
+      if (setup) await setup();
+      await click('#xGo');
+      return waitDl(pred, 300000);
+    });
   }
+  await t('Shirt size outside the range is refused', async () => {
+    await click('#exportMoreBtn'); await p.click('#exportMenu [data-act="spec"]'); await wait(300);
+    if (!(await ev(() => document.querySelector('#xSizeOn').checked))) await click('#xSizeOn');
+    await p.fill('#xSizeW', '5'); await p.dispatchEvent('#xSizeW', 'change'); await click('#xGo'); await wait(300);
+    const msg = await ev(() => !document.querySelector('#xSizeErr').hidden && document.querySelector('#xSizeErr').textContent);
+    await click('#xSizeOn');
+    return /Enter a width between/.test(msg || '') || 'no range message';
+  });
+  await t('Sewing pattern PNG', async () => { await click('#exportMoreBtn'); await p.click('#exportMenu [data-act="pattern"]'); return waitDl(f => f.includes('pattern.png'), 180000); });
+
   await t('Turntable video (9:16, 6 s)', async () => {
     await click('#exportMoreBtn'); await p.click('#exportMenu [data-act="video"]'); await p.click('#vDur [data-d="6"]');
     await click('#vStart');
     const ok = await waitDl(f => /turntable.*\.(mp4|webm)$/.test(f), 600000);
+    if (ok) { const f = downloads.find(x => /turntable/.test(x)); const head = fs.readFileSync(OUT + '/' + f).subarray(4, 8).toString(); if (f.endsWith('.mp4') && head !== 'ftyp') return 'not an MP4: ' + head; }
     await p.click('#videoDlg [data-close]').catch(() => {});
     return ok || await ev(() => document.querySelector('#vStatus').textContent);
   });

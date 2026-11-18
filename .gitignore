@@ -1,2 +1,6 @@
 tests/output/
 node_modules/
+
+# local study data and tools (never commit)
+.craft/
+tools/craft-anything/
