@@ -79,7 +79,7 @@ function bindPreview() {
   }, { passive: false });
   $('.rp-bar').addEventListener('click', (e) => {
     const b = e.target.closest('[data-rv]'); if (!b || renderAbort) return;
-    if (b.dataset.rv === 'reset') { $('#rView').value = ''; studio.viewYaw = studio.targetYaw = 0; studio.turntable.rotation.y = 0; studio.frame(); }
+    if (b.dataset.rv === 'reset') { $('#rView').value = ''; studio.viewYaw = studio.targetYaw = 0; studio.viewPitch = studio.targetPitch = 0; studio.turntable.rotation.y = 0; if (studio.tilt) studio.tilt.rotation.x = 0; studio.frame(); }
     else $('#rView').value = b.dataset.rv;
     showPreview();
   });
