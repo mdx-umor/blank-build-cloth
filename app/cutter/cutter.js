@@ -516,9 +516,15 @@ function updatePieces() {
     <span class="ar">${area[i] ? Math.round(area[i] * 1e4) + ' cm²' : ''}</span>${p.custom ? '<button class="x" data-del="' + i + '" title="Remove this piece">✕</button>' : ''}</div>`).join('');
 }
 function updateStatus() {
-  let un = 0; if (LAB) for (let f = 0; f < M.F; f++) if (!M.side[f] && LAB[f] < 0) un += M.A[f];
+  let un = 0; const area = new Float64Array(S.pieces.length);
+  if (LAB) for (let f = 0; f < M.F; f++) { if (M.side[f]) continue; if (LAB[f] < 0) un += M.A[f]; else area[LAB[f]] += M.A[f]; }
   const pct = M.totalOut ? Math.round((un / M.totalOut) * 100) : 0;
-  $('#status').textContent = `${S.seams.length} seam${S.seams.length === 1 ? '' : 's'} · ${S.fills.length} filled · outside not given to a piece yet: ${pct}%`;
+  // a piece over a third of the garment: its colour ran over through a gap in a seam
+  const big = S.pieces.map((p, i) => [p, area[i] / (M.totalOut || 1)]).filter(([p, a]) => a > 0.33 && p.id !== 'lining');
+  const st = $('#status');
+  st.textContent = `${S.seams.length} seam${S.seams.length === 1 ? '' : 's'} · ${S.fills.length} filled · outside not given to a piece yet: ${pct}%`;
+  st.classList.toggle('warn', big.length > 0);
+  if (big.length) st.textContent += ` · ⚠ ${big.map(([p, a]) => `${p.name} covers ${Math.round(a * 100)}% of the garment`).join(', ')}: a seam around it isn't closed (Undo, then close it)`;
   $('#undoBtn').disabled = !hist.past.length; $('#redoBtn').disabled = !hist.future.length;
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

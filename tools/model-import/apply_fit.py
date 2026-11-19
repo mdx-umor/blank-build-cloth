@@ -30,7 +30,7 @@ def persp(H, x, y):
     w = H[2][0] * x + H[2][1] * y + H[2][2]
     return ((H[0][0] * x + H[0][1] * y + H[0][2]) / w, (H[1][0] * x + H[1][1] * y + H[1][2]) / w)
 
-panel_faces = set(); pocketed = 0
+panel_faces = set(); pocketed = 0; panel_ids = {pn['id'] for pn in panels}
 for pn in panels:
     pts = fit.get(pn['id'])
     if not pts: continue
@@ -40,7 +40,9 @@ for pn in panels:
     pk = pockets.get(pn['id'])
     for fi, locs in by_face.items():
         f = bm.faces[fi]; xy = [pts[l] for l in locs]
-        if pk and 'H' in pk:  # only when the pocket is a piece of its own
+        # only when the pocket is a piece of the pattern but not a panel of the 3D model (a pocket cut in the pattern
+        # cutter is its own panel and is fitted like any other)
+        if pk and 'H' in pk and pk.get('pocket') not in panel_ids:
             cx = sum(p[0] for p in xy) / len(xy); cy = sum(p[1] for p in xy) / len(xy)
             if inside(cx, cy, pk['outline']): xy = [persp(pk['H'], x, y) for x, y in xy]; pocketed += 1
         for lp, (x, y) in zip(f.loops, xy): lp[uvl].uv = (x / 100, -y / 100)

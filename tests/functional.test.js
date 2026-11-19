@@ -387,7 +387,7 @@ fs.mkdirSync(OUT, { recursive: true });
     await p.click('#modelGrid [data-g="hoodie"]'); await wait(1500);
     return n === 2 && nf === 2 && list && await ev(() => DM.doc.garment === 'hoodie' && DM.doc.items.length > 0) || `search=${n} fleece=${nf}`;  // Hoodie + Zip hoodie
   });
-  await t('Zip hoodie (real model): 12 pattern pieces, rib cuffs and waistband, pockets marked, zip in the fabric colour', async () => {
+  await t('Zip hoodie (real model): 14 pattern pieces (pockets cut by the owner), rib cuffs and waistband, pocket outlines marked, zip in the fabric colour', async () => {
     const before = await ev(() => DM.doc.garment);
     await ev(() => DM.switchGarment('hoodie-zip'));
     await p.waitForFunction(() => DM.studio.garment?.id === 'hoodie-zip', null, { timeout: 120000 });
@@ -395,9 +395,9 @@ fs.mkdirSync(OUT, { recursive: true });
     await click('[data-tab="fabric"]'); await wait(300);
     await p.fill('#tabFabric [data-k="fabric.color"][data-hex]', '#2b3a55'); await p.dispatchEvent('#tabFabric [data-k="fabric.color"][data-hex]', 'change'); await wait(400);
     const info = await ev(() => ({ n: DM.garment.pieces.length, rib: DM.garment.pieces.filter(q => q.rib).map(q => q.id).sort().join(','), trims: !!DM.garment.trims?.zip, meshes: DM.studio.panelMeshes.length,
-      pocketMarks: DM.garment.pieces.filter(q => q.folds?.length).map(q => q.id).sort().join(','), zip: '#' + DM.studio.mats.zip.color.getHexString() }));
+      pocketMarks: DM.garment.pieces.filter(q => q.folds?.length).map(q => q.id).sort().join(','), pockets: DM.garment.pieces.filter(q => q.id.startsWith('pocket')).map(q => q.id).sort().join(','), zip: '#' + DM.studio.mats.zip.color.getHexString() }));
     await ev((g) => DM.switchGarment(g), before); await p.waitForFunction((g) => DM.studio.garment?.id === g, before, { timeout: 120000 });
-    return (info.n === 12 && info.rib === 'cuffL,cuffR,waistbandB,waistbandL,waistbandR' && info.trims && info.meshes > 0 && info.pocketMarks === 'frontL,frontR' && info.zip === '#2b3a55') || JSON.stringify(info);
+    return (info.n === 14 && info.pockets === 'pocketL,pocketR' && info.rib === 'cuffL,cuffR,waistbandB,waistbandL,waistbandR' && info.trims && info.meshes > 0 && info.pocketMarks === 'frontL,frontR' && info.zip === '#2b3a55') || JSON.stringify(info);
   });
   await t('Switch to the real 3D shirt model and back', async () => {
     await click('#garmentBtn'); await p.click('#modelChips [data-mg="All"]'); await p.click('#modelGrid [data-g="shirt-ls"]'); await wait(8000);

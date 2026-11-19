@@ -14,6 +14,9 @@ MODE = args[3] if len(args) > 3 else 'all'   # 'labels-only' | 'cut' (stop after
 LABELS_ONLY = MODE == 'labels-only'
 WORK = MODE == 'work'
 UC = json.load(open(args[args.index('--usercut') + 1])) if '--usercut' in args else None
+# --usercut-pieces a,b,c: take only these pieces from the owner's cut (e.g. the sleeves they cut) and the rules' cut for
+# everything else; the owner's seams and the rules' straight seams are both cut
+HYB = set(args[args.index('--usercut-pieces') + 1].split(',')) if '--usercut-pieces' in args else None
 
 INNER, FRONT_L, FRONT_R, BACK, SLEEVE_L, SLEEVE_R, CUFF_L, CUFF_R, HEM_L, HOOD_L, HOOD_R, CORD, ZIP, HEM_R, HEM_B, POCKET_L, POCKET_R = range(17)
 NAMES = {FRONT_L: ('frontL', 'Front · left'), FRONT_R: ('frontR', 'Front · right'), BACK: ('back', 'Back'),
@@ -36,11 +39,12 @@ me = o.data
 # zip edges, the waistband and cuff tops, the side seams). After these cuts no face straddles a seam line, so every
 # panel ends on a clean line. Each cut is made only where that line is a seam (region), not across the whole model.
 # The vertex normals are kept: a new vertex on an old edge takes the normal in between, so the cuts don't show.
-def cut_seams(bm):
+def cut_seams(bm, SEG=None):
     nl = [bm.verts.layers.float.new(k) for k in ('nx', 'ny', 'nz')]
     bm.normal_update()
     for v in bm.verts:
         for k in range(3): v[nl[k]] = v.normal[k]
+    if SEG: user_cuts(bm, SEG)          # the owner's seams first (combined mode)
     X, Y, Z = (1, 0, 0), (0, 1, 0), (0, 0, 1)
     ax = lambda c: abs(c.x)
     cuts = [  # (point on the plane, normal, where the line is a seam)
@@ -118,6 +122,10 @@ def user_cut_seams(bm_, SEG):
     bm_.normal_update()
     for v in bm_.verts:
         for k in range(3): v[nl[k]] = v.normal[k]
+    user_cuts(bm_, SEG)
+    bmesh.ops.triangulate(bm_, faces=[f for f in bm_.faces if len(f.verts) > 3])
+    return {v: Vector((v[nl[0]], v[nl[1]], v[nl[2]])).normalized() for v in bm_.verts}
+def user_cuts(bm_, SEG):
     for sg in SEG:
         bm_.faces.ensure_lookup_table(); tree = BVHTree.FromBMesh(bm_)
         seen, fa, fb = uc_capsule(bm_, tree, sg)
@@ -132,12 +140,10 @@ def user_cut_seams(bm_, SEG):
         cut.update((bm_.faces[fa], bm_.faces[fb]))
         fs = list(cut); es = list({e for f in fs for e in f.edges}); vs = list({v for f in fs for v in f.verts})
         bmesh.ops.bisect_plane(bm_, geom=vs + es + fs, dist=0.0002, plane_co=pa, plane_no=pn)
-    bmesh.ops.triangulate(bm_, faces=[f for f in bm_.faces if len(f.verts) > 3])
-    return {v: Vector((v[nl[0]], v[nl[1]], v[nl[2]])).normalized() for v in bm_.verts}
 
 bm = bmesh.new(); bm.from_mesh(me)
 SEG = uc_segments(UC) if UC else []
-vnorm = None if WORK else user_cut_seams(bm, SEG) if UC else cut_seams(bm)
+vnorm = None if WORK else cut_seams(bm, SEG) if (UC and HYB) else user_cut_seams(bm, SEG) if UC else cut_seams(bm)
 if vnorm:
     bm.verts.index_update()
     vn = [None] * len(bm.verts)
@@ -451,7 +457,7 @@ for i in range(F):
 
 
 # ---- the pieces from the pattern cutter, instead of the rules above ------------------------------------------------
-def user_labels(UC, SEG):
+def user_labels(UC, SEG, raw=False):
     global outer
     ids = {v[0]: k for k, v in NAMES.items()}; ids.update({'zip': ZIP, 'cords': CORD, 'lining': INNER})
     nxt = 20
@@ -509,6 +515,7 @@ def user_labels(UC, SEG):
             p = Vector(q[:3]); n = Vector(q[3:6])
             for loc, nrm, fi, dist in tree.find_nearest_range(p, st['r'] + 0.004):
                 if (cen[fi] - p).length <= st['r'] and bm.faces[fi].normal.dot(n) >= 0.2: ul[fi] = L_ if st.get('piece') else base[fi]
+    if raw: return ul, ids
     out = []
     for i in range(F):
         if ul[i] is None: out.append(17 if outer[i] else INNER)   # outside nobody filled: follows the nearest piece
@@ -517,7 +524,24 @@ def user_labels(UC, SEG):
     for l in out: cnt_[NAMES.get(l, ('lining' if l == INNER else 'zip' if l == ZIP else 'cords' if l == CORD else 'not filled',))[0]] = cnt_.get(NAMES.get(l, ('lining' if l == INNER else 'zip' if l == ZIP else 'cords' if l == CORD else 'not filled',))[0], 0) + 1
     print('USER PIECES', cnt_)
     return out
-if UC: lab = user_labels(UC, SEG)
+if UC and not HYB: lab = user_labels(UC, SEG)
+if UC and HYB:
+    # combined: the owner's pieces listed in --usercut-pieces, the rules' cut for the rest. Where the rules gave a face one
+    # of those pieces but the owner did not, it takes the nearest piece around it (body or sleeve, whichever is nearer)
+    ul, ids = user_labels(UC, SEG, raw=True)
+    TR = {ids[x] for x in HYB if x in ids}
+    PENDING = -5; took = 0
+    for i in range(F):
+        if ul[i] in TR: lab[i] = ul[i]; outer[i] = True; took += 1
+        elif lab[i] in TR: lab[i] = PENDING
+    q_ = [i for i in range(F) if lab[i] not in (PENDING, INNER) and outer[i]]; got = set(q_)
+    for i in q_:
+        for j in nbrs[i]:
+            if lab[j] == PENDING and j not in got: lab[j] = lab[i]; got.add(j); q_.append(j)
+    left_ = sum(1 for l in lab if l == PENDING)
+    for i in range(F):
+        if lab[i] == PENDING: lab[i] = INNER if not outer[i] else 17
+    print('COMBINED: owner pieces', sorted(HYB), '→', took, 'faces; the rules for the rest;', left_, 'faces left over')
 
 # ---- work mesh for the pattern cutter: the uncut model, Outside / Inside, and the rules' cut to compare with -----------
 if WORK:
@@ -624,9 +648,13 @@ for l, grp in parts:
     if best[l] is not grp:
         for i in grp: lab[i] = EXTRA
 keep = [(l, best[l]) for l in best]
+# a pocket is sewn on top of its front: flatten the two together (no seam between them here), so the front lies flat
+# as one piece with the pocket on it instead of a front with a hole (which flattens crooked); panels.json still has
+# them as two panels, each with its part of that flat layout
+JOIN = {frozenset((FRONT_L, POCKET_L)), frozenset((FRONT_R, POCKET_R))}
 for e in bm.edges:
     lf = e.link_faces
-    e.seam = len(lf) == 2 and lab[lf[0].index] != lab[lf[1].index]
+    e.seam = len(lf) == 2 and lab[lf[0].index] != lab[lf[1].index] and frozenset((lab[lf[0].index], lab[lf[1].index])) not in JOIN
 cuts = 0
 for l, grp in keep:
     for _ in range(3):

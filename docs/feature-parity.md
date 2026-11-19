@@ -116,5 +116,5 @@ Legend: ✅ works like the original · ➕ Design Master extra · ⏸ later (acc
 | Wash: Spot size, Wash the prints too, Another pattern | ✅ |
 | Gradient: draggable midpoints between colours | ✅ |
 | Vector pictures show “Vector · sharp at any size” instead of DPI | ✅ |
-| Real 3D model: Zip hoodie (owner's model + the pattern from the owner's screenshot: fronts with zip, back, sleeves, cuffs, 3-part waistband, hood halves; pocket outlines marked on the fronts, prints run over them; seams cut on straight lines; rib knit on cuffs and waistband; zip in the fabric colour unless chosen, colourable drawcords) | ➕ |
+| Real 3D model: Zip hoodie (owner's model + the pattern from the owner's screenshot: fronts with zip, back, sleeves, cuffs, 3-part waistband, hood halves; sleeves, cuffs and pockets as cut by the owner in the Pattern cutter (pockets are their own pieces, outlines marked on the fronts); seams cut on straight lines; rib knit on cuffs and waistband; zip in the fabric colour unless chosen, colourable drawcords) | ➕ |
 | Pattern cutter (`app/cutter/`): draw a 3D model's seams on the surface, fill its pieces, brush, mirror left/right, undo, autosave, Claude's automatic cut to compare, export as a small cut file (Copy for Claude); the converter cuts exactly along those seams | ➕ |

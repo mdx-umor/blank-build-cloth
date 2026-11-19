@@ -65,7 +65,9 @@ fit = {}; report = []
 # one scale for the whole garment: the 3D model is made the size of the pattern (main pieces' areas)
 _main = [pn for pn in panels if pn['id'] in pieces and not pieces[pn['id']]['rib'] and not pn['id'].startswith('pocket')]
 _tri_a = lambda pn: sum(abs((np.array(pn['verts'])[t[1], 3] - np.array(pn['verts'])[t[0], 3]) * (np.array(pn['verts'])[t[2], 4] - np.array(pn['verts'])[t[0], 4]) - (np.array(pn['verts'])[t[2], 3] - np.array(pn['verts'])[t[0], 3]) * (np.array(pn['verts'])[t[1], 4] - np.array(pn['verts'])[t[0], 4])) / 2 for t in pn['tris'])
-scale_all = math.sqrt(sum(abs(area(pieces[pn['id']]['poly'])) for pn in _main) / sum(_tri_a(pn) for pn in _main))
+# (pocket panels lie on the fronts: the front pieces of the pattern include their area)
+_pk = [pn for pn in panels if pn['id'].startswith('pocket')]
+scale_all = math.sqrt(sum(abs(area(pieces[pn['id']]['poly'])) for pn in _main) / sum(_tri_a(pn) for pn in _main + _pk))
 print('model scale to match the pattern:', round(scale_all, 3))
 wb = [np.array(p['verts'])[:, :2] for p in panels if p['id'].startswith('waistband')]
 torso_c = np.concatenate(wb).mean(0) if wb else np.zeros(2)
@@ -127,6 +129,13 @@ for pn in panels:
             c0 = F2.mean(0); F2 = (F2 - c0) @ np.array([[cr, sr], [-sr, cr]]) + c0
             if abs(math.degrees(rot)) > 2: print(f'{pid}: stood upright, turned {math.degrees(rot):.0f}°')
         G0 = F2 * scale_all; S_ = 2.0
+        if pid.startswith('pocket'):
+            # a pocket cut on the model can be bigger or smaller than the pattern's pocket piece: make it the piece's
+            # size (same shape), so a print in the middle of the piece sits in the middle of the pocket
+            Ta = np.abs((G0[tris[:, 1], 0] - G0[tris[:, 0], 0]) * (G0[tris[:, 2], 1] - G0[tris[:, 0], 1]) - (G0[tris[:, 2], 0] - G0[tris[:, 0], 0]) * (G0[tris[:, 1], 1] - G0[tris[:, 0], 1])).sum() / 2
+            if Ta > 0:
+                k_ = math.sqrt(Ap / Ta); G0 = (G0 - G0.mean(0)) * k_ + G0.mean(0)
+                print(f'{pid}: made the size of the pattern piece (×{k_:.2f})')
         Pa = np.array(P); x0, y0 = np.minimum(Pa.min(0), G0.min(0) - Cp + Pa.mean(0)) - 40; Wd, Hd = int((Pa[:, 0].max() - x0 + 80) * S_), int((Pa[:, 1].max() - y0 + 80) * S_)
         mp = np.zeros((Hd, Wd), np.float32); cv2.fillPoly(mp, [np.round((Pa - [x0, y0]) * S_).astype(np.int32)], 1.0)
         best = None
@@ -278,6 +287,8 @@ for front, pocket, side in pairs.get('pockets', []):
     H = cv2.getPerspectiveTransform(box(src), box(dst))  # the pocket's box on the front → the pocket piece's box
     pockets[front] = {'pocket': pocket, 'outline': poly, 'H': H.tolist()}
     print('pocket', pocket, 'outline', len(poly), 'pts on', front)
+if _only and os.path.exists(out_fit):   # fitted only some panels: keep the others from the last run
+    _old = json.load(open(out_fit)); _old['fit'].update(fit); fit = _old['fit']
 json.dump({'fit': fit, 'pockets': pockets, 'model_scale': scale_all}, open(out_fit, 'w'))
 
 # ---- pieces.json for the app ------------------------------------------------------------------------------------

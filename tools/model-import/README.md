@@ -61,3 +61,10 @@ To use a cut: `blender -b model.blend --python hoodie_build.py -- <object> out/ 
 the cutter shows), fills each piece from its point without crossing a seam, applies the brush strokes, and carries on
 as usual (flatten, then `fit_panels.py` / `apply_fit.py`). Pieces with ids from `pairs.json` are fitted to the traced
 pattern; `--debug-seams` lists loose seam ends (a gap in a seam loop shows up there).
+
+A cut that covers only some pieces: `--usercut cut.json --usercut-pieces sleeveL,sleeveR,cuffL,cuffR,pocketL,pocketR`
+takes just those pieces from the owner's cut and the rules' cut for everything else (both sets of seams are cut; where
+the rules gave a face one of those pieces but the owner did not, it takes the nearest piece around it). A pocket cut
+this way is its own panel; it is flattened together with its front (it is sewn on top of it) and then fitted to the
+pocket piece of the pattern (`pairs.json` lists `pocketL`/`pocketR` pieces). The cutter warns when one fill covers more
+than a third of the garment: that is a seam that isn't closed, and such a piece should be left out of the list.

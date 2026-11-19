@@ -30,7 +30,9 @@ Their code, 3D models and branding were **not** copied.
 - Zip hoodie (owner's model): seams are cut on straight lines (no zigzag), pockets are only marked (prints run over
   them), the zip takes the fabric colour, hood rim / hood inside / pocket bags sorted. **Pattern cutter** (`app/cutter/`)
   lets the owner draw the real seams on the 3D model and paste the cut to Claude; `hoodie_build.py --usercut` cuts
-  exactly along it (see `tools/model-import/README.md`). Waiting for the owner's cut.
+  exactly along it (see `tools/model-import/README.md`). The owner's first cut (sleeves, cuffs, pockets:
+  `tools/model-import/examples/hoodie-zip.owner-cut.json`) is in the model, combined with the rules' cut for the rest
+  (`--usercut-pieces`); pockets are their own pieces again. Next: the owner cuts the fronts, back, hood, waistband.
 - Deep study (Nov 2026) with Craft Anything + a hands-on walkthrough: **`docs/analysis/blankbuilder-study.md`**
   (how it's built, their plans/prices, exact dialog behaviour). It added: vector import (SVG/PDF/AI), crop in place,
   the full Halftone dialog, vector print files (outlined letters, vector PDF/SVG prints), shirt-size scaling,

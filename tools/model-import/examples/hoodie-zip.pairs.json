@@ -54,6 +54,14 @@
   "hoodR": {
    "traced": 3,
    "label": "Hood \u00b7 right"
+  },
+  "pocketL": {
+   "traced": 17,
+   "label": "Pocket \u00b7 left"
+  },
+  "pocketR": {
+   "traced": 16,
+   "label": "Pocket \u00b7 right"
   }
  },
  "pockets": [
@@ -117,6 +125,20 @@
    "fx": 0.55,
    "fy": 0.5,
    "w": 10
+  },
+  {
+   "name": "Left pocket",
+   "piece": "pocketL",
+   "fx": 0.5,
+   "fy": 0.5,
+   "w": 7
+  },
+  {
+   "name": "Right pocket",
+   "piece": "pocketR",
+   "fx": 0.5,
+   "fy": 0.5,
+   "w": 7
   }
  ]
 }
